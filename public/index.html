@@ -510,7 +510,15 @@
       state.loading = false;
       els.refresh.classList.remove('spin');
       countdown = REFRESH_S;
-      render();
+      // Only redraw the board when something actually changed; otherwise just update the timestamp.
+      const sig = `${state.sport}|${state.market}|${state.demo}|${JSON.stringify(state.events)}`;
+      if (sig === state.lastSig) {
+        const t = state.fetchedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+        els.statusText.textContent = state.demo ? `Demo data · ${t}` : `Live · updated ${t}`;
+      } else {
+        state.lastSig = sig;
+        render();
+      }
     }
   }
 
@@ -681,7 +689,7 @@
     const ev = state.events.find((e) => e.id === evId);
     const sport = sportOf(state.sport);
     if (!ev || !PROPS[sport.kind]) return;
-    Object.assign(props, { open: true, ev, sport: state.sport, data: null, prev: new Map(), query: '', error: null, ready: false });
+    Object.assign(props, { open: true, ev, sport: state.sport, data: null, prev: new Map(), query: '', error: null, ready: false, sig: null });
     P.board.innerHTML = '';
     if (!PROPS[sport.kind].some(([k]) => k === props.market)) props.market = PROPS[sport.kind][0][0];
     P.search.value = '';
@@ -719,7 +727,10 @@
       error = 'Couldn\u2019t load props right now. Try again in a minute.';
     }
     if (!props.open || token !== props.token) return;
+    const sig = `${props.ev.id}|${props.market}|${error}|${JSON.stringify(data)}`;
     props.data = data; props.error = error; props.ready = true;
+    if (sig === props.sig) { const t = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }); P.status.textContent = state.demo ? `Demo data · ${t}` : `Updated ${t}`; return; }
+    props.sig = sig;
     renderProps();
   }
 
@@ -784,7 +795,7 @@
   els.board.addEventListener('click', (e) => { const b = e.target.closest('.propsbtn'); if (b) openProps(b.dataset.ev); });
   P.markets.addEventListener('click', (e) => {
     const b = e.target.closest('button'); if (!b || b.dataset.m === props.market) return;
-    props.market = b.dataset.m; props.prev = new Map(); props.ready = false;
+    props.market = b.dataset.m; props.prev = new Map(); props.ready = false; props.sig = null;
     P.markets.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.m === props.market)));
     P.board.innerHTML = ''; loadProps();
   });
