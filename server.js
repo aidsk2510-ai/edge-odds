@@ -8,7 +8,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { INDOOR_SPORTS, venueFor } from './venues.js';
+import { INDOOR_SPORTS, venueFor, placeGuesses, normalize as teamKey } from './venues.js';
 
 const ROOT = fileURLToPath(new URL('./public/', import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -51,6 +51,20 @@ const cache = new Map(); // key -> { at, body, inflight }
 // Weather from Open-Meteo (https://open-meteo.com): free, no key. Check their terms before commercial use.
 const WEATHER_BASE = (process.env.WEATHER_API_BASE || 'https://api.open-meteo.com').replace(/\/$/, '');
 const WEATHER_TTL = 30 * 60 * 1000;
+const GEOCODE_BASE = (process.env.GEOCODE_API_BASE || 'https://geocoding-api.open-meteo.com').replace(/\/$/, '');
+const geocoded = new Map(); // team -> Promise<[lat, lon, 'outdoor'] | null>, kept for the life of the server
+const US_SPORTS = new Set(['americanfootball_nfl', 'americanfootball_ncaaf', 'baseball_mlb', 'soccer_usa_mls']);
+
+// Neutral-site games (bowls, playoffs, Army-Navy, NFL international games): the odds feed doesn't say where a game is played,
+// so we check ESPN's public scoreboard, which lists each game's venue. If ESPN is unreachable we fall back to the home stadium.
+const ESPN_BASE = (process.env.ESPN_API_BASE || 'https://site.api.espn.com').replace(/\/$/, '');
+const ESPN_LEAGUES = {
+  americanfootball_nfl: ['football/nfl', ['']],
+  americanfootball_ncaaf: ['football/college-football', ['&groups=80', '&groups=81']], // FBS and FCS
+  baseball_mlb: ['baseball/mlb', ['']],
+  soccer_usa_mls: ['soccer/usa.1', ['']],
+};
+const STATES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming' };
 
 async function upstream(path, params) {
   const url = new URL(API_BASE + path);
@@ -108,21 +122,124 @@ function forecast(lat, lon) {
   });
 }
 
-// What to show for a game: indoors, a forecast for kickoff (or now, if live), or null if the venue is unknown.
+// Backup for teams missing from venues.js: look the team's city up with Open-Meteo's place search.
+// Logged so the team can be added to venues.js properly (with its roof type).
+function geocodeTeam(sport, team) {
+  const key = `${sport}|${team}`;
+  if (!geocoded.has(key)) {
+    geocoded.set(key, (async () => {
+      for (const name of placeGuesses(team).slice(0, 5)) {
+        const url = new URL(GEOCODE_BASE + '/v1/search');
+        url.searchParams.set('name', name); url.searchParams.set('count', '10'); url.searchParams.set('language', 'en');
+        if (US_SPORTS.has(sport) && sport !== 'soccer_usa_mls') url.searchParams.set('countryCode', 'US');
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          const place = ((await res.json()).results || [])
+            .filter((r) => String(r.feature_code || '').startsWith('PPL') && (r.population || 0) >= 15000)
+            .filter((r) => sport !== 'soccer_usa_mls' || ['US', 'CA'].includes(r.country_code))
+            .sort((a, b) => (b.population || 0) - (a.population || 0))[0];
+          if (place) {
+            console.warn(`[weather] "${team}" (${sport}) isn't in venues.js; using ${place.name}, ${place.admin1 || place.country}. Add it to venues.js.`);
+            return [place.latitude, place.longitude, 'outdoor'];
+          }
+        } catch {}
+      }
+      console.warn(`[weather] No location found for "${team}" (${sport}). Add it to venues.js.`);
+      return null;
+    })());
+  }
+  return geocoded.get(key);
+}
+
+// ESPN uses US Eastern dates.
+const etDate = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(ms).replace(/-/g, '');
+
+function espnDay(sport, ymd) {
+  const [path, groups] = ESPN_LEAGUES[sport];
+  return cached(`espn:${sport}:${ymd}`, 3 * 60 * 60 * 1000, async () => {
+    const games = [];
+    for (const g of groups) {
+      const res = await fetch(`${ESPN_BASE}/apis/site/v2/sports/${path}/scoreboard?dates=${ymd}&limit=400${g}`);
+      if (!res.ok) throw new Error(`ESPN ${res.status}`);
+      for (const ev of (await res.json()).events || []) {
+        const c = ev.competitions?.[0];
+        if (!c) continue;
+        games.push({
+          teams: (c.competitors || []).map((t) => teamKey(t.team?.displayName || t.team?.name || '')),
+          neutral: Boolean(c.neutralSite),
+          indoor: Boolean(c.venue?.indoor),
+          venue: c.venue?.fullName || '',
+          city: c.venue?.address?.city || '',
+          state: c.venue?.address?.state || '',
+          country: c.venue?.address?.country || '',
+        });
+      }
+    }
+    return games;
+  });
+}
+
+const sameTeam = (a, b) => a === b || a.startsWith(b + ' ') || b.startsWith(a + ' ');
+
+// Returns { name, lat, lon, roof } if ESPN says this game is at a neutral site, else null.
+async function neutralSite(sport, ev) {
+  if (!ESPN_LEAGUES[sport]) return null;
+  try {
+    const games = await espnDay(sport, etDate(new Date(ev.commence_time).getTime()));
+    const home = teamKey(ev.home_team), away = teamKey(ev.away_team);
+    const g = games.find((x) => x.teams.some((t) => sameTeam(t, home)) && x.teams.some((t) => sameTeam(t, away)));
+    if (!g || !g.neutral) return null;
+    const label = [g.venue, g.city].filter(Boolean).join(', ');
+    if (g.indoor) return { name: label, roof: 'dome' };
+    const spot = await geocodePlace(g.city, g.state, g.country);
+    return spot ? { name: label, lat: spot[0], lon: spot[1], roof: 'outdoor' } : null;
+  } catch {
+    return null;
+  }
+}
+
+// City + state/country -> [lat, lon], cached for the life of the server.
+const places = new Map();
+function geocodePlace(city, state, country) {
+  const key = `${city}|${state}|${country}`;
+  if (!places.has(key)) {
+    places.set(key, (async () => {
+      if (!city) return null;
+      const url = new URL(GEOCODE_BASE + '/v1/search');
+      url.searchParams.set('name', city); url.searchParams.set('count', '20'); url.searchParams.set('language', 'en');
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const want = STATES[state] || state;
+      const results = ((await res.json()).results || []).filter((r) => String(r.feature_code || '').startsWith('PPL'));
+      const match = results.find((r) => want && (r.admin1 === want || r.country === want || r.country === country || r.admin1 === country))
+        || results.find((r) => country && (r.country === country || (country === 'USA' && r.country_code === 'US')))
+        || results.sort((a, b) => (b.population || 0) - (a.population || 0))[0];
+      return match ? [match.latitude, match.longitude] : null;
+    })().catch(() => null));
+  }
+  return places.get(key);
+}
+
+// What to show for a game: indoors, a forecast for kickoff (or now, if live), or null if no location can be found.
 async function weatherFor(sport, ev) {
   if (INDOOR_SPORTS.has(sport)) return { type: 'indoor' };
-  const venue = venueFor(sport, ev.home_team);
+  let venue = null, approx = false, site = null;
+  const neutral = await neutralSite(sport, ev);
+  if (neutral) { site = neutral.name; venue = [neutral.lat, neutral.lon, neutral.roof]; }
+  if (!venue) venue = venueFor(sport, ev.home_team);
+  if (!venue) { venue = await geocodeTeam(sport, ev.home_team); approx = true; }
   if (!venue) return null;
   const [lat, lon, roof] = venue;
-  if (roof === 'dome') return { type: 'indoor' };
+  if (roof === 'dome') return { type: 'indoor', site };
   try {
     const h = await forecast(lat, lon);
     const at = Math.max(Date.now(), new Date(ev.commence_time).getTime()) / 1000;
     let best = -1;
     h.time.forEach((t, i) => { if (best < 0 || Math.abs(t - at) < Math.abs(h.time[best] - at)) best = i; });
-    if (best < 0 || Math.abs(h.time[best] - at) > 2 * 3600) return { type: roof, later: true }; // beyond the forecast window
+    if (best < 0 || Math.abs(h.time[best] - at) > 2 * 3600) return { type: roof, later: true, approx, site }; // beyond the forecast window
     return {
-      type: roof,
+      type: roof, approx, site,
       tempF: Math.round(h.temperature_2m[best]),
       windMph: Math.round(h.wind_speed_10m[best]),
       rainPct: h.precipitation_probability[best],
@@ -206,7 +323,7 @@ async function handleApi(req, res, url) {
 // Props create one cache entry per game+market; drop ones nobody has asked for in a while.
 setInterval(() => {
   const cutoff = Date.now() - 2 * 60 * 60 * 1000;
-  for (const [k, v] of cache) if ((k.startsWith('props:') || k.startsWith('wx:')) && v.at < cutoff && !v.inflight) cache.delete(k);
+  for (const [k, v] of cache) if (/^(props|wx|espn):/.test(k) && v.at < cutoff && !v.inflight) cache.delete(k);
 }, 15 * 60 * 1000).unref();
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
