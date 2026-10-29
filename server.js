@@ -5,6 +5,7 @@
 // server, and caches responses so every visitor shares the same upstream call.
 
 import http from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,25 +90,36 @@ async function upstream(path, params) {
 }
 
 // Cache with in-flight de-duplication: concurrent visitors trigger one upstream call.
+// Stale-while-revalidate: once something has loaded, visitors never wait on a refresh. They get the
+// last copy instantly while a single background refresh runs (same number of upstream calls).
 // `ttl` is a number of ms, or a function (body) => ms so each response can pick its own lifetime.
-async function cached(key, ttl, loader) {
+function cached(key, ttl, loader) {
   const hit = cache.get(key);
-  if (hit?.body && Date.now() - hit.at < hit.ttl) return hit.body;
-  if (hit?.inflight) return hit.inflight;
+  const has = hit && 'body' in hit;
+  if (has && Date.now() - hit.at < hit.ttl) return Promise.resolve(hit.body);
+  if (hit?.inflight) return has ? Promise.resolve(hit.body) : hit.inflight;
   const inflight = loader()
     .then((body) => {
       cache.set(key, { at: Date.now(), body, ttl: typeof ttl === 'function' ? ttl(body) : ttl });
       return body;
     })
     .catch((e) => {
-      // Serve stale data if we have it rather than failing the page.
-      if (hit?.body) { cache.set(key, hit); return { ...hit.body, stale: true }; }
+      const cur = cache.get(key);
+      if (cur && 'body' in cur) { // keep serving the old copy; retry in a minute
+        cache.set(key, { at: Date.now(), body: cur.body, ttl: Math.min(cur.ttl, 60 * 1000) });
+        return cur.body;
+      }
       cache.delete(key);
       throw e;
     });
   cache.set(key, { ...hit, inflight });
+  if (has) { inflight.catch(() => {}); return Promise.resolve(hit.body); }
   return inflight;
 }
+
+// Wait at most `ms` for an optional extra (weather, EPA); if it isn't ready, carry on without it.
+// The work keeps going in the background and is cached for the next refresh.
+const soon = (promise, ms = 400) => Promise.race([promise.catch(() => null), new Promise((r) => setTimeout(() => r(null), ms))]);
 
 // Hourly forecast for one venue (16 days ahead), cached for 30 minutes.
 function forecast(lat, lon) {
@@ -273,12 +285,22 @@ async function epaFinder(sport) {
   }
 }
 
+// Compress anything over 1 KB when the browser accepts gzip (odds boards shrink ~10x).
+function send(res, status, headers, data) {
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  if (buf.length > 1024 && /\bgzip\b/.test(res.req?.headers['accept-encoding'] || '')) {
+    res.writeHead(status, { ...headers, 'content-encoding': 'gzip', vary: 'accept-encoding' });
+    return res.end(gzipSync(buf));
+  }
+  res.writeHead(status, headers);
+  res.end(buf);
+}
+
 function sendJSON(res, status, body, maxAge = 0) {
-  res.writeHead(status, {
+  send(res, status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': maxAge ? `public, max-age=${maxAge}` : 'no-store',
-  });
-  res.end(JSON.stringify(body));
+  }, JSON.stringify(body));
 }
 
 async function handleApi(req, res, url) {
@@ -310,8 +332,11 @@ async function handleApi(req, res, url) {
       const nextStart = Math.min(...data.map((ev) => new Date(ev.commence_time).getTime()).filter((t) => t > now));
       return { fetchedAt: new Date(now).toISOString(), quota, live, nextStart: Number.isFinite(nextStart) ? nextStart : null, events: data };
     });
-    const epa = await epaFinder(sport);
-    const events = await Promise.all(body.events.map(async (ev) => ({ ...ev, weather: await weatherFor(sport, ev), epa: epa ? epa(ev) : null })));
+    const [epa, weather] = await Promise.all([
+      soon(epaFinder(sport)),
+      Promise.all(body.events.map((ev) => soon(weatherFor(sport, ev)))),
+    ]);
+    const events = body.events.map((ev, i) => ({ ...ev, weather: weather[i], epa: epa ? epa(ev) : null }));
     const { quota, ...pub } = body; // credit balance stays private (it's in the server log)
     return sendJSON(res, 200, { ...pub, events }, Math.floor((body.live ? LIVE_TTL : ODDS_TTL) / 2000));
   }
@@ -359,8 +384,7 @@ async function handleStatic(res, pathname) {
   if (rel.startsWith('..')) { res.writeHead(403); return res.end(); }
   try {
     const file = await readFile(join(ROOT, rel));
-    res.writeHead(200, { 'content-type': TYPES[extname(rel)] || 'application/octet-stream' });
-    res.end(file);
+    send(res, 200, { 'content-type': TYPES[extname(rel)] || 'application/octet-stream', 'cache-control': 'no-cache' }, file);
   } catch {
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('Not found');
@@ -378,4 +402,6 @@ http.createServer(async (req, res) => {
   }
 }).listen(PORT, () => {
   console.log(`Edge running on http://localhost:${PORT} (${API_KEY ? 'live odds' : 'demo mode — set ODDS_API_KEY'})`);
+  // Start the slow loads right away so the first visitor after a restart doesn't wait for them.
+  if (API_KEY) for (const sport of Object.keys(EPA_LOADERS)) epaFinder(sport);
 });

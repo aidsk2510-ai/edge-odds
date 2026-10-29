@@ -23,29 +23,42 @@ const NFL_TEAMS = {
 // Football seasons run Sep–Feb, so January/February games belong to the previous year's season.
 export const footballSeason = (d = new Date()) => (d.getUTCMonth() < 2 ? d.getUTCFullYear() - 1 : d.getUTCFullYear());
 
-// Streaming CSV reader (handles quoted fields with commas, quotes and newlines). Calls onRow(array) per record.
-async function streamCsv(readable, onRow) {
-  let field = '', row = [], inQuotes = false, quotePending = false;
-  for await (const chunk of readable) {
-    const s = chunk.toString('utf8');
-    for (let i = 0; i < s.length; i++) {
-      const c = s[i];
-      if (inQuotes) {
-        if (quotePending) {
-          quotePending = false;
-          if (c === '"') { field += '"'; continue; }
-          inQuotes = false; // fall through: the quote closed the field
-        } else if (c === '"') { quotePending = true; continue; }
-        else { field += c; continue; }
-      }
-      if (c === '"') inQuotes = true;
-      else if (c === ',') { row.push(field); field = ''; }
-      else if (c === '\n') { row.push(field); onRow(row); row = []; field = ''; }
-      else if (c !== '\r') field += c;
-    }
+// Streaming CSV reader. Most lines have no quotes and go through a fast native split; lines with quoted
+// fields (commas, quotes or newlines inside) use a careful parser. Calls onRow(array) per record.
+function parseQuoted(line) {
+  const out = []; let field = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === '"') { if (line[i + 1] === '"') { field += '"'; i++; } else q = false; }
+      else field += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { out.push(field); field = ''; }
+    else field += c;
   }
-  if (quotePending) inQuotes = false;
-  if (field || row.length) { row.push(field); onRow(row); }
+  out.push(field);
+  return out;
+}
+
+async function streamCsv(readable, onRow) {
+  readable.setEncoding('utf8'); // decodes multi-byte characters safely across chunk boundaries
+  let rest = '', pending = '';
+  const emit = (raw) => {
+    let line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+    if (pending) { line = pending + '\n' + line; pending = ''; }
+    if (line.indexOf('"') === -1) return onRow(line.split(','));
+    let quotes = 0;
+    for (let i = line.indexOf('"'); i !== -1; i = line.indexOf('"', i + 1)) quotes++;
+    if (quotes % 2) { pending = line; return; } // a quoted field continues on the next line
+    onRow(parseQuoted(line));
+  };
+  for await (const chunk of readable) {
+    const lines = (rest + chunk).split('\n');
+    rest = lines.pop();
+    for (const l of lines) emit(l);
+  }
+  if (rest) emit(rest);
+  if (pending) onRow(parseQuoted(pending));
 }
 
 function rank(list, key, desc) {
