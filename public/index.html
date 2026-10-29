@@ -263,6 +263,10 @@
   .askbox button:disabled { opacity: 0.4; }
   .askfine { padding: 0 20px 12px; font-size: 11px; color: var(--faint); background: var(--bg); }
 
+  .askfab { position: fixed; right: 20px; bottom: 20px; z-index: 30; border: 0; border-radius: 999px; padding: 12px 18px; background: var(--accent); color: var(--accent-ink); font-weight: 800; font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.45); display: inline-flex; gap: 8px; align-items: center; }
+  .askfab:hover { transform: translateY(-1px); }
+  body.locked .askfab { display: none; }
+
   /* Player props */
   .propsbtn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 3px 9px; font-size: 12px; font-weight: 600; }
   .propsbtn:hover { border-color: var(--accent); color: var(--accent); }
@@ -348,6 +352,7 @@
   </div>
 </main>
 
+<button class="askfab" id="askFab" aria-label="Ask Edge"><span>💬</span> Ask Edge</button>
 <div class="scrim" id="scrim"></div>
 <div class="scrim calc" id="cScrim"></div>
 <aside class="drawer picks" id="picksDrawer" aria-hidden="true" aria-label="Edge Picks">
@@ -358,10 +363,10 @@
   <div class="askpane" id="askPane" hidden>
     <div class="askmsgs" id="askMsgs" aria-live="polite"></div>
     <form class="askbox" id="askForm" autocomplete="off">
-      <textarea id="askInput" rows="1" maxlength="600" placeholder="Ask about tonight's odds, picks or a parlay…"></textarea>
+      <textarea id="askInput" rows="1" maxlength="600" placeholder="Ask about any sport, bet or parlay…"></textarea>
       <button type="submit" id="askSend" aria-label="Send">↑</button>
     </form>
-    <div class="askfine">Answers use the odds on this site only, not injuries or news. Not financial advice. 21+.</div>
+    <div class="askfine">Answers use this site’s odds, weather, EPA and props, not injuries or news. Not financial advice. 21+.</div>
   </div>
 </aside>
 <div class="modal" id="calc" role="dialog" aria-modal="true" aria-labelledby="cTitle" aria-hidden="true">
@@ -1222,9 +1227,9 @@
 
   // ---------- Ask Edge (chat) ----------
   const A = { pane: document.getElementById('askPane'), msgs: document.getElementById('askMsgs'), form: document.getElementById('askForm'), input: document.getElementById('askInput'), send: document.getElementById('askSend'), tabs: document.getElementById('pkTabs') };
-  const ask = { tab: 'picks', busy: false, threads: {} }; // one conversation per sport
-  const SUGGEST = ['What’s the best bet tonight?', 'Build me a 2-leg parlay', 'Which bet is the safest?', 'What does the best parlay pay on $25?', 'Explain the top pick simply'];
-  const thread = () => (ask.threads[picks.sport] ||= []);
+  const ask = { tab: 'picks', busy: false, msgs: [] }; // one conversation across every sport
+  const SUGGEST = ['Best bets across all sports today', 'Build a 3-leg parlay from different sports', 'Any football games with bad weather?', 'Which NFL teams have the best EPA this week?', 'Show me NBA player points props tonight', 'How do you pick bets?'];
+  const thread = () => ask.msgs;
 
   function setTab(t) {
     ask.tab = t;
@@ -1237,7 +1242,7 @@
     const msgs = thread();
     let html = '';
     if (!msgs.length) {
-      html = `<div class="askhello">Hi! I'm <b>Edge</b>. Ask me anything about the ${esc(sportOf(picks.sport).label)} odds on this site: the best bets, what a parlay pays, which sportsbook has the best price, or what the numbers mean.
+      html = `<div class="askhello">Hi! I'm <b>Edge</b>. I can see every sport on this site: odds at every sportsbook, fair chances, weather, team EPA and player props. Ask me for the best bets, to build a parlay (even across sports), or what any number means.
         <div class="suggest">${SUGGEST.map((q) => `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div></div>`;
     }
     html += msgs.map((m) => m.role === 'user'
@@ -1260,7 +1265,7 @@
     renderThread(true);
     let reply;
     try {
-      const res = await fetch('/api/ask', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sport: picks.sport, question: q, history }), cache: 'no-store' });
+      const res = await fetch('/api/ask', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ viewing: state.sport, question: q, history }), cache: 'no-store' });
       const body = await res.json().catch(() => ({}));
       if (res.ok && body.text) reply = { role: 'assistant', text: body.text };
       else {
@@ -1282,6 +1287,7 @@
   A.msgs.addEventListener('click', (e) => { const b = e.target.closest('button[data-q]'); if (b) sendQuestion(b.dataset.q); });
 
   document.getElementById('picksBtn').addEventListener('click', openPicks);
+  document.getElementById('askFab').addEventListener('click', () => { ask.tab = 'ask'; openPicks(); });
   document.getElementById('pkClose').addEventListener('click', closePicks);
   P.scrim.addEventListener('click', () => { if (picks.open) closePicks(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && picks.open && !calc.open) { e.preventDefault(); closePicks(); } });
