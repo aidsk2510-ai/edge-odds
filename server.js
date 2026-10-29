@@ -11,6 +11,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { INDOOR_SPORTS, venueFor, placeGuesses, normalize as teamKey } from './venues.js';
 import { loadNflEpa, loadCfbEpa, indexTeams } from './stats.js';
+import './public/picks-engine.js'; // defines globalThis.EdgePicks (also used by the page)
 
 const ROOT = fileURLToPath(new URL('./public/', import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -306,6 +307,84 @@ function sendJSON(res, status, body, maxAge = 0) {
   }, JSON.stringify(body));
 }
 
+// One sport + bet type from The Odds API, cached (shared by the odds board and Edge Picks).
+function getOdds(sport, market) {
+  return cached(`odds:${sport}:${market}`, (b) => (b.live ? LIVE_TTL : Math.max(LIVE_TTL, Math.min(ODDS_TTL, (b.nextStart ?? Infinity) - Date.now()))), async () => {
+    const { data, quota } = await upstream(`/v4/sports/${sport}/odds`, {
+      regions: REGIONS, markets: market, oddsFormat: 'decimal', dateFormat: 'iso',
+    });
+    const now = Date.now();
+    const live = data.some((ev) => new Date(ev.commence_time).getTime() <= now);
+    // If a game starts before the slow refresh would come round, refresh at kickoff instead.
+    const nextStart = Math.min(...data.map((ev) => new Date(ev.commence_time).getTime()).filter((t) => t > now));
+    return { fetchedAt: new Date(now).toISOString(), quota, live, nextStart: Number.isFinite(nextStart) ? nextStart : null, events: data };
+  });
+}
+
+// ---------- Edge Picks: math engine + optional AI write-up ----------
+const AI_KEY = process.env.ANTHROPIC_API_KEY || '';
+const AI_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-5-5';
+const AI_BASE = (process.env.ANTHROPIC_API_BASE || 'https://api.anthropic.com').replace(/\/$/, '');
+const AI_TTL = (Number(process.env.PICKS_AI_MINUTES) || 15) * 60 * 1000; // one write-up per sport per 15 min
+const PICK_MARKETS = ['h2h', 'spreads', 'totals'];
+const SPORT_NAMES = {
+  americanfootball_nfl: 'NFL', americanfootball_ncaaf: 'college football', basketball_nba: 'NBA', basketball_ncaab: 'college basketball',
+  basketball_wnba: 'WNBA', baseball_mlb: 'MLB', icehockey_nhl: 'NHL', soccer_epl: 'Premier League', soccer_uefa_champs_league: 'Champions League',
+  soccer_usa_mls: 'MLS', soccer_spain_la_liga: 'La Liga', mma_mixed_martial_arts: 'UFC/MMA',
+};
+const AI_SYSTEM = `You write the "Edge Picks" note on a sports odds comparison website. You receive numbers the site's math engine already calculated:
+- fairChance: each bet's real chance of winning, averaged from all sportsbooks after removing their built-in margin.
+- best price at a licensed US sportsbook for that bet.
+- edge: positive means the price pays more than the fair chance says (a bargain); negative means the sportsbook keeps about that much on average.
+Parlays are priced at a single sportsbook, one leg per game.
+
+Write for a casual bettor in plain, simple words that a 5th grader could follow. 120 to 180 words, plain text, in this shape:
+One sentence on today's board: are there real bargains or not.
+Best single: one bet, with the sportsbook, the price, and its chance to win.
+Best parlay: the legs, the sportsbook, the price, what a $10 bet returns, and how often it hits (say it like "about 1 in 5").
+Skip: one thing to avoid and why.
+A last line reminding people to check prices at the sportsbook before betting.
+
+Rules: use only the numbers given and copy prices exactly. Never invent injuries, news, stats, records, or trends. Never promise a win or call anything a lock. If every edge is negative, say plainly that nothing is a true bargain and these are the cheapest options. No markdown symbols.`;
+
+async function writePicksNote(sport, r) {
+  const et = (iso) => new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const pct = (x) => `${(x * 100).toFixed(1)}%`;
+  const data = {
+    sport: SPORT_NAMES[sport] || sport,
+    singles: r.singles.slice(0, 6).map((x) => ({ pick: x.pick, game: x.game, starts: `${et(x.start)} ET`, sportsbook: x.best.title, price: x.bestOdds, fairChance: pct(x.fair), edge: `${(x.edge * 100).toFixed(1)}%` })),
+    parlays: r.parlays.slice(0, 3).map((p) => ({ legs: p.legs.map((l) => `${l.pick} (${l.game})`), sportsbook: p.title, price: p.odds, tenDollarsReturns: `$${(10 * p.dec).toFixed(2)}`, hitChance: pct(p.hit), edge: `${(p.ev * 100).toFixed(1)}%` })),
+  };
+  const res = await fetch(`${AI_BASE}/v1/messages`, {
+    method: 'POST',
+    headers: { 'x-api-key': AI_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: AI_MODEL, max_tokens: 2000, system: AI_SYSTEM, messages: [{ role: 'user', content: JSON.stringify(data) }] }),
+  });
+  if (!res.ok) throw new Error(`Claude API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const out = await res.json();
+  const text = (out.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+  if (!text) throw new Error('Claude API returned no text');
+  if (out.usage) console.log(`[picks] AI note for ${sport}: ${out.usage.input_tokens} in / ${out.usage.output_tokens} out tokens`);
+  return { text, at: new Date().toISOString(), model: AI_MODEL };
+}
+
+// Merge the moneyline, spread and total boards into one list of games.
+function mergeBoards(boards) {
+  const byId = new Map();
+  for (const board of boards) {
+    for (const ev of board?.events || []) {
+      if (!byId.has(ev.id)) byId.set(ev.id, { ...ev, bookmakers: [] });
+      const target = byId.get(ev.id);
+      for (const b of ev.bookmakers || []) {
+        let tb = target.bookmakers.find((x) => x.key === b.key);
+        if (!tb) { tb = { key: b.key, title: b.title, markets: [] }; target.bookmakers.push(tb); }
+        tb.markets.push(...(b.markets || []));
+      }
+    }
+  }
+  return [...byId.values()];
+}
+
 async function handleApi(req, res, url) {
   if (url.pathname === '/api/health') return sendJSON(res, 200, { ok: true, live: Boolean(API_KEY) });
   if (!API_KEY) return sendJSON(res, 200, { error: 'no_key' });
@@ -325,16 +404,7 @@ async function handleApi(req, res, url) {
     if (!MAJOR_SPORTS.has(sport)) return sendJSON(res, 400, { error: 'unknown_sport' });
     if (!MARKETS.has(market)) return sendJSON(res, 400, { error: 'unknown_market' });
 
-    const body = await cached(`odds:${sport}:${market}`, (b) => (b.live ? LIVE_TTL : Math.max(LIVE_TTL, Math.min(ODDS_TTL, (b.nextStart ?? Infinity) - Date.now()))), async () => {
-      const { data, quota } = await upstream(`/v4/sports/${sport}/odds`, {
-        regions: REGIONS, markets: market, oddsFormat: 'decimal', dateFormat: 'iso',
-      });
-      const now = Date.now();
-      const live = data.some((ev) => new Date(ev.commence_time).getTime() <= now);
-      // If a game starts before the slow refresh would come round, refresh at kickoff instead.
-      const nextStart = Math.min(...data.map((ev) => new Date(ev.commence_time).getTime()).filter((t) => t > now));
-      return { fetchedAt: new Date(now).toISOString(), quota, live, nextStart: Number.isFinite(nextStart) ? nextStart : null, events: data };
-    });
+    const body = await getOdds(sport, market);
     const [epa, weather] = await Promise.all([
       soon(epaFinder(sport)),
       Promise.all(body.events.map((ev) => soon(weatherFor(sport, ev)))),
@@ -345,6 +415,24 @@ async function handleApi(req, res, url) {
     const entry = cache.get(`odds:${sport}:${market}`);
     const refreshing = Boolean(entry?.inflight) || (entry && Date.now() - entry.at >= entry.ttl);
     return sendJSON(res, 200, { ...pub, events, refreshing }); // no browser caching: the server cache handles load
+  }
+
+  if (url.pathname === '/api/picks') {
+    const sport = url.searchParams.get('sport');
+    if (!MAJOR_SPORTS.has(sport)) return sendJSON(res, 400, { error: 'unknown_sport' });
+    const boards = await Promise.all(PICK_MARKETS.map((m) => getOdds(sport, m).catch(() => null)));
+    const r = globalThis.EdgePicks.analyze(mergeBoards(boards), { markets: PICK_MARKETS });
+    const strip = (x) => { const { offers, ...rest } = x; return rest; };
+    let note = null, pending = false;
+    if (AI_KEY && r.singles.length) {
+      const job = cached(`ai:${sport}`, AI_TTL, () => writePicksNote(sport, r));
+      note = await soon(job, 150);
+      pending = !note;
+    }
+    return sendJSON(res, 200, {
+      sport, generatedAt: r.generatedAt, games: r.games, singles: r.singles.map(strip), parlays: r.parlays,
+      note, pending, plain: globalThis.EdgePicks.plainSummary(r),
+    });
   }
 
   if (url.pathname === '/api/props') {
@@ -382,7 +470,7 @@ async function handleApi(req, res, url) {
 // Props create one cache entry per game+market; drop ones nobody has asked for in a while.
 setInterval(() => {
   const cutoff = Date.now() - 2 * 60 * 60 * 1000;
-  for (const [k, v] of cache) if (/^(props|wx|espn):/.test(k) && v.at < cutoff && !v.inflight) cache.delete(k);
+  for (const [k, v] of cache) if (/^(props|wx|espn|ai):/.test(k) && v.at < cutoff && !v.inflight) cache.delete(k);
 }, 15 * 60 * 1000).unref();
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
