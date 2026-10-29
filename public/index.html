@@ -59,6 +59,8 @@
   .status { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
   .status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--up); box-shadow: 0 0 0 3px rgba(53, 208, 127, 0.18); }
   .status.demo .dot { background: #f5b942; box-shadow: 0 0 0 3px rgba(245, 185, 66, 0.18); }
+  .status.old { color: #f3d79b; }
+  .status.old .dot { background: #f5b942; box-shadow: 0 0 0 3px rgba(245, 185, 66, 0.18); }
   .iconbtn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 10px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
   .iconbtn:hover { color: var(--text); }
   .iconbtn svg { width: 14px; height: 14px; }
@@ -544,7 +546,7 @@
 
   // ---------- Data ----------
   async function fetchOdds() {
-    const res = await fetch(`/api/odds?sport=${encodeURIComponent(state.sport)}&market=${state.market}`, { headers: { accept: 'application/json' } });
+    const res = await fetch(`/api/odds?sport=${encodeURIComponent(state.sport)}&market=${state.market}`, { headers: { accept: 'application/json' }, cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
     if (body.error) throw new Error(body.error);
@@ -571,6 +573,7 @@
       state.demo = false;
       state.events = body.events || [];
       state.fetchedAt = body.fetchedAt ? new Date(body.fetchedAt) : new Date();
+      state.refreshing = Boolean(body.refreshing);
       state.unsupported = false;
     } catch (e) {
       state.demo = true;
@@ -581,17 +584,29 @@
     } finally {
       state.loading = false;
       els.refresh.classList.remove('spin');
-      countdown = REFRESH_S;
+      // If the server handed back an older copy while it fetches fresh odds, check again in a few seconds.
+      countdown = state.refreshing ? 3 : REFRESH_S;
       // Only redraw the board when something actually changed; otherwise just update the timestamp.
       const sig = `${state.sport}|${state.market}|${state.demo}|${JSON.stringify(state.events)}`;
       if (sig === state.lastSig) {
-        const t = state.fetchedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
-        els.statusText.textContent = state.demo ? `Demo data · ${t}` : `Live · updated ${t}`;
+        updateStatus();
       } else {
         state.lastSig = sig;
         render();
       }
     }
+  }
+
+  // ---------- Status line ----------
+  // Shows when the odds were last fetched; warns if they're old (e.g. the odds feed is down).
+  function updateStatus() {
+    if (!state.fetchedAt) return;
+    const t = state.fetchedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+    const mins = Math.floor((Date.now() - state.fetchedAt.getTime()) / 60000);
+    const old = !state.demo && mins >= 10;
+    els.status.classList.toggle('demo', state.demo);
+    els.status.classList.toggle('old', old);
+    els.statusText.textContent = state.demo ? `Demo data · ${t}` : old ? `Odds may be out of date · last updated ${mins} min ago` : `Live · updated ${t}`;
   }
 
   // ---------- Rendering ----------
@@ -678,10 +693,7 @@
     if (q) events = events.filter((ev) => `${ev.home_team} ${ev.away_team}`.toLowerCase().includes(q));
     events.sort((a, b) => (b.live - a.live) || (new Date(a.commence_time) - new Date(b.commence_time)));
 
-    // Status
-    els.status.classList.toggle('demo', state.demo);
-    const t = state.fetchedAt ? state.fetchedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '';
-    els.statusText.textContent = state.demo ? `Demo data · ${t}` : `Live · updated ${t}`;
+    updateStatus();
     els.banner.hidden = !state.demo;
     els.banner.innerHTML = state.demo ? '<div>You\'re looking at <b>simulated odds</b>. Run the Edge server with an <code>ODDS_API_KEY</code> from the-odds-api.com to show real, live lines from every sportsbook.</div>' : '';
 
@@ -940,10 +952,11 @@
       if (state.demo) {
         data = Demo.props(props.sport, props.ev, props.market);
       } else {
-        const res = await fetch(`/api/props?sport=${encodeURIComponent(props.sport)}&event=${encodeURIComponent(props.ev.id)}&market=${props.market}`);
+        const res = await fetch(`/api/props?sport=${encodeURIComponent(props.sport)}&event=${encodeURIComponent(props.ev.id)}&market=${props.market}`, { cache: 'no-store' });
         const body = await res.json();
         if (!res.ok || body.error) throw new Error(body.error || `HTTP ${res.status}`);
         data = body.event;
+        if (body.refreshing) setTimeout(() => { if (props.open) loadProps(); }, 3000);
       }
     } catch (e) {
       error = 'Couldn\u2019t load props right now. Try again in a minute.';
@@ -1053,8 +1066,15 @@
   els.refresh.addEventListener('click', load);
 
   let countdown = REFRESH_S;
+  // Coming back to the tab after a while: get fresh odds right away instead of waiting for the timer.
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    if (hiddenAt && Date.now() - hiddenAt > 15000) { load(); loadProps(); }
+  });
   setInterval(() => {
     if (document.hidden) return;
+    updateStatus();
     countdown -= 1;
     if (countdown <= 0) { load(); loadProps(); }
     els.countdown.textContent = `${Math.max(0, countdown)}s`;
