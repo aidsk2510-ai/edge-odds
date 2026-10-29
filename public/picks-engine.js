@@ -107,7 +107,7 @@
     }
     const topParlays = [...bestByLegs.values()].sort((a, b) => b.ev - a.ev).slice(0, opts.maxParlays ?? 5);
 
-    return { singles, parlays: topParlays, games: perGame.size, generatedAt: new Date(now).toISOString() };
+    return { singles, parlays: topParlays, games: perGame.size, generatedAt: new Date(now).toISOString(), sides };
   }
 
   // Plain-English write-up without AI (used in demo mode or if the AI is off).

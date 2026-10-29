@@ -237,6 +237,32 @@
   .legs li span { color: var(--muted); font-size: 12px; }
   .pfoot { margin-top: 18px; font-size: 12px; color: var(--faint); line-height: 1.6; }
 
+  .ptabs { display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 3px; align-self: flex-start; }
+  .ptabs button { border: 0; background: transparent; color: var(--muted); padding: 6px 14px; border-radius: 6px; font-weight: 600; font-size: 13px; }
+  .ptabs button[aria-selected="true"] { background: var(--panel-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+  .askpane { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .askpane[hidden] { display: none; }
+  .askmsgs { flex: 1; overflow: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 88%; padding: 10px 13px; border-radius: 12px; line-height: 1.55; font-size: 14px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { align-self: flex-end; background: var(--text); color: var(--bg); border-bottom-right-radius: 4px; }
+  .msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+  .msg.bot .by { display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+  .msg.err { border-color: rgba(245, 185, 66, 0.4); color: #f3d79b; }
+  .typing span { display: inline-block; width: 6px; height: 6px; margin: 0 2px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: 0.2s; } .typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+  .askhello { color: var(--muted); font-size: 14px; line-height: 1.6; }
+  .askhello b { color: var(--text); }
+  .suggest { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .suggest button { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 999px; padding: 7px 12px; font-size: 13px; text-align: left; }
+  .suggest button:hover { border-color: var(--accent); }
+  .askbox { display: flex; gap: 8px; align-items: flex-end; padding: 12px 20px 6px; border-top: 1px solid var(--line); background: var(--bg); }
+  .askbox textarea { flex: 1; resize: none; max-height: 140px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; color: var(--text); font-family: inherit; font-size: 14px; line-height: 1.45; padding: 10px 12px; outline: none; }
+  .askbox textarea:focus { border-color: var(--faint); }
+  .askbox button { width: 40px; height: 40px; border-radius: 10px; border: 0; background: var(--accent); color: var(--accent-ink); font-size: 18px; font-weight: 800; flex: none; }
+  .askbox button:disabled { opacity: 0.4; }
+  .askfine { padding: 0 20px 12px; font-size: 11px; color: var(--faint); background: var(--bg); }
+
   /* Player props */
   .propsbtn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 3px 9px; font-size: 12px; font-weight: 600; }
   .propsbtn:hover { border-color: var(--accent); color: var(--accent); }
@@ -326,8 +352,17 @@
 <div class="scrim calc" id="cScrim"></div>
 <aside class="drawer picks" id="picksDrawer" aria-hidden="true" aria-label="Edge Picks">
   <div class="dhead"><div class="dtitle"><h2 id="pkTitle">✨ Edge Picks</h2><button class="x" id="pkClose" aria-label="Close">×</button></div>
+    <div class="ptabs" id="pkTabs" role="tablist"><button data-t="picks" aria-selected="true" role="tab">Picks</button><button data-t="ask" aria-selected="false" role="tab">💬 Ask Edge</button></div>
     <div class="status" id="pkStatus" style="font-size:12px"></div></div>
   <div class="dbody" id="pkBody"></div>
+  <div class="askpane" id="askPane" hidden>
+    <div class="askmsgs" id="askMsgs" aria-live="polite"></div>
+    <form class="askbox" id="askForm" autocomplete="off">
+      <textarea id="askInput" rows="1" maxlength="600" placeholder="Ask about tonight's odds, picks or a parlay…"></textarea>
+      <button type="submit" id="askSend" aria-label="Send">↑</button>
+    </form>
+    <div class="askfine">Answers use the odds on this site only, not injuries or news. Not financial advice. 21+.</div>
+  </div>
 </aside>
 <div class="modal" id="calc" role="dialog" aria-modal="true" aria-labelledby="cTitle" aria-hidden="true">
   <div class="mhead"><div><h2 id="cTitle">Arb calculator</h2><div class="sub" id="cSub"></div></div><button class="x" id="cClose" aria-label="Close">×</button></div>
@@ -1092,6 +1127,7 @@
     PK.body.innerHTML = '<div class="note loading"><div class="who">Edge Picks</div><p>Crunching every price at every sportsbook…</p></div>';
     PK.drawer.classList.add('open'); P.scrim.classList.add('open'); PK.drawer.setAttribute('aria-hidden', 'false');
     document.body.classList.add('locked');
+    setTab(ask.tab);
     loadPicks();
   }
   function closePicks() {
@@ -1183,6 +1219,67 @@
     const how = PK.body.querySelector('details.howto');
     if (how) how.addEventListener('toggle', () => { picks.howOpen = how.open; try { store?.setItem('edge.how', how.open ? '1' : '0'); } catch {} });
   }
+
+  // ---------- Ask Edge (chat) ----------
+  const A = { pane: document.getElementById('askPane'), msgs: document.getElementById('askMsgs'), form: document.getElementById('askForm'), input: document.getElementById('askInput'), send: document.getElementById('askSend'), tabs: document.getElementById('pkTabs') };
+  const ask = { tab: 'picks', busy: false, threads: {} }; // one conversation per sport
+  const SUGGEST = ['What’s the best bet tonight?', 'Build me a 2-leg parlay', 'Which bet is the safest?', 'What does the best parlay pay on $25?', 'Explain the top pick simply'];
+  const thread = () => (ask.threads[picks.sport] ||= []);
+
+  function setTab(t) {
+    ask.tab = t;
+    A.tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.t === t)));
+    PK.body.hidden = t !== 'picks';
+    A.pane.hidden = t !== 'ask';
+    if (t === 'ask') { renderThread(); setTimeout(() => A.input.focus(), 50); }
+  }
+  function renderThread(pending) {
+    const msgs = thread();
+    let html = '';
+    if (!msgs.length) {
+      html = `<div class="askhello">Hi! I'm <b>Edge</b>. Ask me anything about the ${esc(sportOf(picks.sport).label)} odds on this site: the best bets, what a parlay pays, which sportsbook has the best price, or what the numbers mean.
+        <div class="suggest">${SUGGEST.map((q) => `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div></div>`;
+    }
+    html += msgs.map((m) => m.role === 'user'
+      ? `<div class="msg user">${esc(m.text)}</div>`
+      : `<div class="msg bot ${m.err ? 'err' : ''}"><span class="by">Edge</span>${esc(m.text)}</div>`).join('');
+    if (pending) html += '<div class="msg bot"><span class="by">Edge</span><span class="typing"><span></span><span></span><span></span></span></div>';
+    A.msgs.innerHTML = html;
+    A.msgs.scrollTop = A.msgs.scrollHeight;
+  }
+  async function sendQuestion(q) {
+    q = q.trim();
+    if (!q || ask.busy) return;
+    if (state.demo) {
+      thread().push({ role: 'user', text: q }, { role: 'assistant', text: 'Ask Edge answers on the live site, using real odds. In this preview the odds are simulated, so there’s nothing real to answer from yet.', err: true });
+      renderThread(); return;
+    }
+    const history = thread().filter((m) => !m.err).map((m) => ({ role: m.role, text: m.text }));
+    thread().push({ role: 'user', text: q });
+    ask.busy = true; A.send.disabled = true; A.input.value = ''; autosize();
+    renderThread(true);
+    let reply;
+    try {
+      const res = await fetch('/api/ask', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sport: picks.sport, question: q, history }), cache: 'no-store' });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && body.text) reply = { role: 'assistant', text: body.text };
+      else {
+        const why = { slow_down: 'You’re asking quickly! Give it a minute and try again.', daily_limit: 'You’ve hit today’s question limit. Come back tomorrow.', ai_off: 'Ask Edge isn’t switched on yet.' }[body.error] || 'Something went wrong. Please try again in a moment.';
+        reply = { role: 'assistant', text: why, err: true };
+      }
+    } catch {
+      reply = { role: 'assistant', text: 'Couldn’t reach the server. Check your connection and try again.', err: true };
+    }
+    thread().push(reply);
+    ask.busy = false; A.send.disabled = false;
+    if (picks.open && ask.tab === 'ask') { renderThread(); A.input.focus(); }
+  }
+  function autosize() { A.input.style.height = 'auto'; A.input.style.height = Math.min(140, A.input.scrollHeight) + 'px'; }
+  A.tabs.addEventListener('click', (e) => { const b = e.target.closest('button[data-t]'); if (b) setTab(b.dataset.t); });
+  A.form.addEventListener('submit', (e) => { e.preventDefault(); sendQuestion(A.input.value); });
+  A.input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuestion(A.input.value); } });
+  A.input.addEventListener('input', autosize);
+  A.msgs.addEventListener('click', (e) => { const b = e.target.closest('button[data-q]'); if (b) sendQuestion(b.dataset.q); });
 
   document.getElementById('picksBtn').addEventListener('click', openPicks);
   document.getElementById('pkClose').addEventListener('click', closePicks);
