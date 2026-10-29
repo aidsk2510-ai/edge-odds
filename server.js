@@ -10,8 +10,12 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { INDOOR_SPORTS, venueFor, placeGuesses, normalize as teamKey } from './venues.js';
-import { loadNflEpa, loadCfbEpa, indexTeams } from './stats.js';
-import './public/picks-engine.js'; // defines globalThis.EdgePicks (also used by the page)
+// Optional features load separately, so a missing file switches that feature off instead of crashing the site.
+let loadNflEpa = null, loadCfbEpa = null, indexTeams = null;
+try { ({ loadNflEpa, loadCfbEpa, indexTeams } = await import('./stats.js')); }
+catch (e) { console.error(`[startup] Team EPA is off: couldn't load stats.js (${e.message}). Upload stats.js to the main folder.`); }
+try { await import('./public/picks-engine.js'); } // defines globalThis.EdgePicks (also used by the page)
+catch (e) { console.error(`[startup] Edge Picks is off: couldn't load public/picks-engine.js (${e.message}). Upload it into the public folder.`); }
 
 const ROOT = fileURLToPath(new URL('./public/', import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -269,7 +273,7 @@ async function weatherFor(sport, ev) {
 
 // Team EPA/play for football boards, refreshed every 6 hours (nflverse updates daily; CFBD a few times a week).
 const EPA_TTL = 6 * 60 * 60 * 1000;
-const EPA_LOADERS = { americanfootball_nfl: loadNflEpa, americanfootball_ncaaf: loadCfbEpa };
+const EPA_LOADERS = loadNflEpa ? { americanfootball_nfl: loadNflEpa, americanfootball_ncaaf: loadCfbEpa } : {};
 async function epaFinder(sport) {
   if (!EPA_LOADERS[sport]) return null;
   try {
@@ -420,6 +424,7 @@ async function handleApi(req, res, url) {
   if (url.pathname === '/api/picks') {
     const sport = url.searchParams.get('sport');
     if (!MAJOR_SPORTS.has(sport)) return sendJSON(res, 400, { error: 'unknown_sport' });
+    if (!globalThis.EdgePicks) return sendJSON(res, 503, { error: 'picks_unavailable' });
     const boards = await Promise.all(PICK_MARKETS.map((m) => getOdds(sport, m).catch(() => null)));
     const r = globalThis.EdgePicks.analyze(mergeBoards(boards), { markets: PICK_MARKETS });
     const strip = (x) => { const { offers, ...rest } = x; return rest; };
