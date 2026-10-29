@@ -9,6 +9,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { INDOOR_SPORTS, venueFor, placeGuesses, normalize as teamKey } from './venues.js';
+import { loadNflEpa, loadCfbEpa, indexTeams } from './stats.js';
 
 const ROOT = fileURLToPath(new URL('./public/', import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -250,6 +251,26 @@ async function weatherFor(sport, ev) {
   }
 }
 
+// Team EPA/play for football boards, refreshed every 6 hours (nflverse updates daily; CFBD a few times a week).
+const EPA_TTL = 6 * 60 * 60 * 1000;
+const EPA_LOADERS = { americanfootball_nfl: loadNflEpa, americanfootball_ncaaf: loadCfbEpa };
+async function epaFinder(sport) {
+  if (!EPA_LOADERS[sport]) return null;
+  try {
+    const stats = await cached(`epa:${sport}`, EPA_TTL, () => EPA_LOADERS[sport]());
+    if (!stats) return null;
+    const find = indexTeams(stats);
+    const pick = (name) => {
+      const t = find(name);
+      return t && { net: t.net, off: t.off, def: t.def, netRank: t.netRank, offRank: t.offRank, defRank: t.defRank };
+    };
+    return (ev) => ({ home: pick(ev.home_team), away: pick(ev.away_team), of: stats.count, through: stats.through, season: stats.season });
+  } catch (e) {
+    console.warn(`[epa] ${sport}: ${e.message}`);
+    return null;
+  }
+}
+
 function sendJSON(res, status, body, maxAge = 0) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -287,7 +308,8 @@ async function handleApi(req, res, url) {
       const nextStart = Math.min(...data.map((ev) => new Date(ev.commence_time).getTime()).filter((t) => t > now));
       return { fetchedAt: new Date(now).toISOString(), quota, live, nextStart: Number.isFinite(nextStart) ? nextStart : null, events: data };
     });
-    const events = await Promise.all(body.events.map(async (ev) => ({ ...ev, weather: await weatherFor(sport, ev) })));
+    const epa = await epaFinder(sport);
+    const events = await Promise.all(body.events.map(async (ev) => ({ ...ev, weather: await weatherFor(sport, ev), epa: epa ? epa(ev) : null })));
     return sendJSON(res, 200, { ...body, events }, Math.floor((body.live ? LIVE_TTL : ODDS_TTL) / 2000));
   }
 
