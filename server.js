@@ -14,7 +14,11 @@ const PORT = Number(process.env.PORT) || 3000;
 const API_KEY = process.env.ODDS_API_KEY || '';
 const API_BASE = (process.env.ODDS_API_BASE || 'https://api.the-odds-api.com').replace(/\/$/, '');
 const REGIONS = process.env.ODDS_REGIONS || 'us,us2';
-const ODDS_TTL = (Number(process.env.CACHE_SECONDS) || 60) * 1000;
+// How long to reuse odds before asking The Odds API again.
+// Live games refresh fast (the API updates in-play odds ~every 40s);
+// boards with no live games refresh slowly (pre-match odds update ~every 5 min).
+const ODDS_TTL = (Number(process.env.CACHE_SECONDS) || 300) * 1000;
+const LIVE_TTL = (Number(process.env.LIVE_CACHE_SECONDS) || 30) * 1000;
 const SPORTS_TTL = 60 * 60 * 1000;
 
 // Sports the site lists. Add or remove keys here (see GET /v4/sports for all keys).
@@ -49,12 +53,16 @@ async function upstream(path, params) {
 }
 
 // Cache with in-flight de-duplication: concurrent visitors trigger one upstream call.
+// `ttl` is a number of ms, or a function (body) => ms so each response can pick its own lifetime.
 async function cached(key, ttl, loader) {
   const hit = cache.get(key);
-  if (hit?.body && Date.now() - hit.at < ttl) return hit.body;
+  if (hit?.body && Date.now() - hit.at < hit.ttl) return hit.body;
   if (hit?.inflight) return hit.inflight;
   const inflight = loader()
-    .then((body) => { cache.set(key, { at: Date.now(), body }); return body; })
+    .then((body) => {
+      cache.set(key, { at: Date.now(), body, ttl: typeof ttl === 'function' ? ttl(body) : ttl });
+      return body;
+    })
     .catch((e) => {
       // Serve stale data if we have it rather than failing the page.
       if (hit?.body) { cache.set(key, hit); return { ...hit.body, stale: true }; }
@@ -92,13 +100,17 @@ async function handleApi(req, res, url) {
     if (!MAJOR_SPORTS.has(sport)) return sendJSON(res, 400, { error: 'unknown_sport' });
     if (!MARKETS.has(market)) return sendJSON(res, 400, { error: 'unknown_market' });
 
-    const body = await cached(`odds:${sport}:${market}`, ODDS_TTL, async () => {
+    const body = await cached(`odds:${sport}:${market}`, (b) => (b.live ? LIVE_TTL : Math.max(LIVE_TTL, Math.min(ODDS_TTL, (b.nextStart ?? Infinity) - Date.now()))), async () => {
       const { data, quota } = await upstream(`/v4/sports/${sport}/odds`, {
         regions: REGIONS, markets: market, oddsFormat: 'decimal', dateFormat: 'iso',
       });
-      return { fetchedAt: new Date().toISOString(), quota, events: data };
+      const now = Date.now();
+      const live = data.some((ev) => new Date(ev.commence_time).getTime() <= now);
+      // If a game starts before the slow refresh would come round, refresh at kickoff instead.
+      const nextStart = Math.min(...data.map((ev) => new Date(ev.commence_time).getTime()).filter((t) => t > now));
+      return { fetchedAt: new Date(now).toISOString(), quota, live, nextStart: Number.isFinite(nextStart) ? nextStart : null, events: data };
     });
-    return sendJSON(res, 200, body, Math.floor(ODDS_TTL / 2000));
+    return sendJSON(res, 200, body, Math.floor((body.live ? LIVE_TTL : ODDS_TTL) / 2000));
   }
 
   return sendJSON(res, 404, { error: 'not_found' });
