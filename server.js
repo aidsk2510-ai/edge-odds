@@ -77,6 +77,8 @@ async function upstream(path, params) {
     err.status = res.status;
     throw err;
   }
+  const remaining = res.headers.get('x-requests-remaining');
+  if (remaining != null) console.log(`[odds] ${path} — credits left: ${remaining}`);
   return {
     data: await res.json(),
     quota: {
@@ -310,7 +312,8 @@ async function handleApi(req, res, url) {
     });
     const epa = await epaFinder(sport);
     const events = await Promise.all(body.events.map(async (ev) => ({ ...ev, weather: await weatherFor(sport, ev), epa: epa ? epa(ev) : null })));
-    return sendJSON(res, 200, { ...body, events }, Math.floor((body.live ? LIVE_TTL : ODDS_TTL) / 2000));
+    const { quota, ...pub } = body; // credit balance stays private (it's in the server log)
+    return sendJSON(res, 200, { ...pub, events }, Math.floor((body.live ? LIVE_TTL : ODDS_TTL) / 2000));
   }
 
   if (url.pathname === '/api/props') {
@@ -336,7 +339,8 @@ async function handleApi(req, res, url) {
           throw e;
         }
       });
-    return sendJSON(res, 200, body, Math.floor((body.live ? PROPS_LIVE_TTL : PROPS_TTL) / 2000));
+    const { quota, ...pub } = body;
+    return sendJSON(res, 200, pub, Math.floor((body.live ? PROPS_LIVE_TTL : PROPS_TTL) / 2000));
   }
 
   return sendJSON(res, 404, { error: 'not_found' });
