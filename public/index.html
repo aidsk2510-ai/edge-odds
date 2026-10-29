@@ -139,6 +139,58 @@
   .epa.neg { color: var(--down); border-color: rgba(255, 107, 107, 0.35); }
   .epa .lbl { font-family: 'Inter Tight', sans-serif; font-size: 10px; letter-spacing: 0.05em; color: var(--faint); }
 
+  button.hold { font: inherit; font-family: var(--mono); font-size: 11px; background: transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+  button.hold:hover { color: var(--text); border-color: var(--faint); }
+  button.hold.arb:hover { color: #fff; border-color: var(--arb); }
+  button.hold svg { width: 11px; height: 11px; opacity: 0.8; }
+
+  /* Arb calculator */
+  .modal { position: fixed; z-index: 51; left: 50%; top: 50%; transform: translate(-50%, -48%) scale(0.98); width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 32px); overflow: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 30px 80px rgba(0,0,0,0.5); opacity: 0; pointer-events: none; transition: opacity 0.15s, transform 0.15s; }
+  .modal.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
+  .scrim.calc { z-index: 50; }
+  .mhead { padding: 16px 18px 12px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: flex-start; }
+  .mhead h2 { margin: 2px 0 0; font-size: 16px; }
+  .mhead .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .mhead .x { margin-left: auto; border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; width: 30px; height: 30px; font-size: 17px; color: var(--muted); flex: none; }
+  .mbody { padding: 14px 18px 18px; display: flex; flex-direction: column; gap: 14px; }
+  .field label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); margin-bottom: 6px; }
+  .stakebox { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .money { display: flex; align-items: center; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; }
+  .money span { color: var(--muted); font-family: var(--mono); }
+  .money input, .cside input { background: transparent; border: 0; outline: 0; color: var(--text); font: 600 15px var(--mono); padding: 9px 6px; width: 110px; }
+  .presets button, .seg2 button { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 999px; padding: 5px 10px; font-size: 12px; font-weight: 600; }
+  .presets button:hover { color: var(--text); }
+  .seg2 { display: inline-flex; gap: 4px; }
+  .seg2 button[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .csides { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .cside { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line-soft); }
+  .cside:first-child { border-top: 0; }
+  .cside .who b { display: block; font-size: 14px; }
+  .cside .who small { color: var(--muted); font-size: 12px; }
+  .cside .odds { display: flex; align-items: center; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 0 4px 0 8px; }
+  .cside .odds .pt { font: 500 12px var(--mono); color: var(--muted); margin-right: 2px; }
+  .cside .odds input { width: 74px; text-align: right; padding: 7px 4px; font-size: 14px; }
+  .cside .odds.edited { border-color: rgba(245, 185, 66, 0.6); }
+  .cside .bet { text-align: right; min-width: 104px; }
+  .cside .bet b { display: block; font: 700 17px var(--mono); color: var(--accent); }
+  .cside .bet small { color: var(--muted); font-size: 11px; }
+  .verdict { border-radius: 10px; padding: 12px 14px; border: 1px solid var(--line); background: var(--panel-2); }
+  .verdict .big { font: 700 22px var(--mono); }
+  .verdict .lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .verdict.win { border-color: rgba(76, 195, 255, 0.5); background: rgba(76, 195, 255, 0.07); }
+  .verdict.win .big { color: var(--arb); }
+  .verdict.lose .big { color: var(--down); }
+  .flip { font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .flip b { color: var(--text); font-family: var(--mono); }
+  .warn { font-size: 12px; color: #f3d79b; background: rgba(245, 185, 66, 0.08); border: 1px solid rgba(245, 185, 66, 0.25); border-radius: 8px; padding: 8px 10px; }
+  .mfoot { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; font-size: 11px; color: var(--faint); }
+  .linkbtn { border: 0; background: none; color: var(--muted); text-decoration: underline; font-size: 12px; padding: 0; }
+  @media (max-width: 520px) {
+    .cside { grid-template-columns: 1fr auto; }
+    .cside .bet { grid-column: 1 / -1; text-align: left; display: flex; gap: 8px; align-items: baseline; }
+  }
+
   /* Player props */
   .propsbtn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 3px 9px; font-size: 12px; font-weight: 600; }
   .propsbtn:hover { border-color: var(--accent); color: var(--accent); }
@@ -224,6 +276,26 @@
 </main>
 
 <div class="scrim" id="scrim"></div>
+<div class="scrim calc" id="cScrim"></div>
+<div class="modal" id="calc" role="dialog" aria-modal="true" aria-labelledby="cTitle" aria-hidden="true">
+  <div class="mhead"><div><h2 id="cTitle">Arb calculator</h2><div class="sub" id="cSub"></div></div><button class="x" id="cClose" aria-label="Close">×</button></div>
+  <div class="mbody">
+    <div class="field"><label for="cStake">Total amount to bet</label>
+      <div class="stakebox">
+        <div class="money"><span>$</span><input id="cStake" type="number" inputmode="decimal" min="0" step="any" value="100"></div>
+        <div class="presets" id="cPresets"><button data-v="100">$100</button><button data-v="500">$500</button><button data-v="1000">$1,000</button></div>
+      </div>
+    </div>
+    <div class="field"><label>Round each bet</label>
+      <div class="seg2" id="cRound"><button data-v="0.01" aria-pressed="true">Exact</button><button data-v="1" aria-pressed="false">$1</button><button data-v="5" aria-pressed="false">$5</button></div>
+    </div>
+    <div class="field"><label>Bets to place <span style="text-transform:none;letter-spacing:0">— edit a price to match what the sportsbook shows</span></label><div class="csides" id="cSides"></div></div>
+    <div id="cWarn"></div>
+    <div class="verdict" id="cVerdict"></div>
+    <div class="flip" id="cFlip"></div>
+    <div class="mfoot"><button class="linkbtn" id="cReset">Reset to latest best prices</button><span>Prices move fast. Confirm at each sportsbook before betting.</span></div>
+  </div>
+</div>
 <aside class="drawer" id="drawer" aria-hidden="true" aria-label="Player props">
   <div class="dhead">
     <div class="dtitle"><span id="pWhen"></span><h2 id="pTitle">Player props</h2><span id="pWx"></span><button class="x" id="pClose" aria-label="Close">×</button></div>
@@ -626,6 +698,7 @@
     }
 
     const nextPrev = new Map();
+    calcData.clear();
     let html = `<table><thead><tr><th class="sel">${state.market === 'h2h' ? 'Moneyline' : state.market === 'spreads' ? 'Spread' : 'Total'}</th><th class="bestcol">Best</th>` +
       books.map((b) => `<th><span class="bk"><i style="background:${b.color}"></i>${esc(b.title)}</span></th>`).join('') + `</tr></thead><tbody>`;
 
@@ -646,8 +719,14 @@
       // Spreads/totals with mismatched points aren't a true arb, so only flag when points line up.
       const linesMatch = state.market === 'h2h' || (complete && (state.market === 'spreads' ? bests[0].best.point === -bests[1].best.point : bests[0].best.point === bests[1].best.point));
       const isArb = hold != null && hold < 0 && linesMatch;
-      const holdHtml = hold == null ? '' : `<span class="hold ${isArb ? 'arb' : ''}" title="Combined margin if you take the best price on every side">${isArb ? 'ARB ' : 'Best-line hold '}${(hold * 100).toFixed(1)}%</span>`;
+      const holdHtml = hold == null ? '' : `<button class="hold ${isArb ? 'arb' : ''}" data-calc="${esc(ev.id)}" title="Open the arbitrage calculator for this game">${CALC_ICON}${isArb ? 'ARB ' : 'Best-line hold '}${(hold * 100).toFixed(1)}%</button>`;
       const title = sport.kind === 'soccer' ? `${ev.home_team} vs ${ev.away_team}` : sport.kind === 'mma' ? `${ev.away_team} vs ${ev.home_team}` : `${ev.away_team} @ ${ev.home_team}`;
+      if (complete) {
+        calcData.set(ev.id, {
+          title, market: state.market, linesMatch, when: ev.live ? 'LIVE' : timeFmt.format(new Date(ev.commence_time)),
+          sides: rows.map((row, i) => ({ label: row.label, side: row.name, dec: bests[i].best.price, point: bests[i].best.point ?? null, book: BOOKS[bests[i].bestBook.key]?.[0] || bests[i].bestBook.title })),
+        });
+      }
 
       html += `<tr class="ev"><td class="sel" colspan="${books.length + 2}"><div class="evhead">${ev.live ? '<span class="livepill">LIVE</span>' : `<span class="evtime">${esc(timeFmt.format(new Date(ev.commence_time)))}</span>`}<span class="evtitle">${esc(title)}</span>${state.market === 'totals' && ev.epa ? epaChip(ev.epa.away, ev.epa, nickOf(ev.away_team)) + epaChip(ev.epa.home, ev.epa, nickOf(ev.home_team)) : ''}${weatherChip(ev.weather)}<span class="push">${holdHtml}${PROPS[sport.kind] ? `<button class="propsbtn" data-ev="${esc(ev.id)}">Player props ›</button>` : ''}</span></div></td></tr>`;
 
@@ -676,6 +755,149 @@
     state.prev = nextPrev;
     els.board.innerHTML = html;
   }
+
+  // ---------- Arbitrage calculator ----------
+  const CALC_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="1.5" width="10" height="13" rx="2"/><path d="M5.5 4.5h5M5.5 8h1M9.5 8h1M5.5 11h1M9.5 11h1"/></svg>';
+  const calcData = new Map(); // game id -> best price per side, rebuilt on every board render
+  const C = {
+    modal: document.getElementById('calc'), scrim: document.getElementById('cScrim'), title: document.getElementById('cTitle'), sub: document.getElementById('cSub'),
+    stake: document.getElementById('cStake'), sides: document.getElementById('cSides'), verdict: document.getElementById('cVerdict'),
+    flip: document.getElementById('cFlip'), warn: document.getElementById('cWarn'), round: document.getElementById('cRound'),
+  };
+  const calc = { open: false, id: null, data: null, prices: [], edited: [], round: 0.01 };
+  const money = (x) => '$' + x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtOdds = (d) => (state.format === 'decimal' ? d.toFixed(2) : (toAmerican(d) > 0 ? '+' : '') + toAmerican(d));
+  // Accepts American (+350, -357, 350) or decimal (4.50) odds; returns decimal odds or null.
+  function parseOdds(text) {
+    const t = String(text).trim().replace(/[^\d.+-]/g, '');
+    if (!t) return null;
+    const n = Number(t);
+    if (!Number.isFinite(n)) return null;
+    if (/^[+-]/.test(t) || Math.abs(n) >= 100) {
+      if (Math.abs(n) < 100) return null;
+      return n > 0 ? 1 + n / 100 : 1 + 100 / Math.abs(n);
+    }
+    return n > 1 ? n : null;
+  }
+  // The worst price for side i that would still make this an arb, given the other prices.
+  function flipPrice(i, decs) {
+    const others = decs.reduce((s, d, j) => (j === i ? s : s + 1 / d), 0);
+    if (others >= 1) return null; // the other sides alone already cost more than 100%
+    return 1 / (1 - others);
+  }
+
+  function openCalc(id) {
+    const data = calcData.get(id);
+    if (!data) return;
+    Object.assign(calc, { open: true, id, data, prices: data.sides.map((x) => x.dec), edited: data.sides.map(() => false) });
+    C.title.textContent = data.title;
+    C.sub.textContent = `${data.when} · ${data.market === 'h2h' ? 'Moneyline' : data.market === 'spreads' ? 'Spread' : 'Total'}`;
+    buildSides();
+    C.modal.classList.add('open'); C.scrim.classList.add('open'); C.modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('locked');
+    computeCalc();
+    setTimeout(() => C.stake.focus(), 50);
+  }
+  function closeCalc() {
+    calc.open = false;
+    C.modal.classList.remove('open'); C.scrim.classList.remove('open'); C.modal.setAttribute('aria-hidden', 'true');
+    if (!props.open) document.body.classList.remove('locked');
+  }
+  function buildSides() {
+    const pt = (x) => (x.point == null ? '' : calc.data.market === 'totals' ? `${x.side === 'Over' ? 'O' : 'U'} ${x.point}` : fmtPoint(x.point, 'spreads'));
+    C.sides.innerHTML = calc.data.sides.map((x, i) => `
+      <div class="cside">
+        <div class="who"><b>${esc(x.label)}</b><small>at ${esc(x.book)}</small></div>
+        <div class="odds ${calc.edited[i] ? 'edited' : ''}">${x.point != null ? `<span class="pt">${esc(pt(x))}</span>` : ''}<input data-i="${i}" value="${esc(fmtOdds(calc.prices[i]))}" inputmode="text" aria-label="Odds for ${esc(x.label)}"></div>
+        <div class="bet" id="cBet${i}"></div>
+      </div>`).join('');
+  }
+  function computeCalc() {
+    if (!calc.open) return;
+    const total = Math.max(0, Number(C.stake.value) || 0);
+    const decs = calc.prices;
+    const ok = decs.every((d) => d && d > 1);
+    C.warn.innerHTML = !calc.data.linesMatch
+      ? '<div class="warn">The best lines here are at different numbers (for example −3.5 at one book and +3 at another), so there is a gap where both bets could lose. This isn’t a true arb.</div>' : '';
+    if (!ok || !total) {
+      decs.forEach((_, i) => { document.getElementById('cBet' + i).innerHTML = '<b>—</b>'; });
+      C.verdict.className = 'verdict'; C.verdict.innerHTML = `<div class="lbl">${!ok ? 'Enter valid odds for every side (like +350, −357 or 4.50).' : 'Enter an amount to bet.'}</div>`;
+      C.flip.innerHTML = '';
+      return;
+    }
+    const sum = decs.reduce((s, d) => s + 1 / d, 0); // total implied probability
+    const step = calc.round;
+    const stakes = decs.map((d) => Math.max(step, Math.round(((total * (1 / d)) / sum) / step) * step));
+    const spent = stakes.reduce((a, b) => a + b, 0);
+    const returns = stakes.map((st, i) => st * decs[i]);
+    const worst = Math.min(...returns), best = Math.max(...returns);
+    stakes.forEach((st, i) => {
+      document.getElementById('cBet' + i).innerHTML = `<b>${money(st)}</b><small>returns ${money(returns[i])}</small>`;
+    });
+    const profit = worst - spent;
+    const pct = (profit / spent) * 100;
+    const isArb = profit > 0.004 && calc.data.linesMatch;
+    C.verdict.className = 'verdict ' + (isArb ? 'win' : 'lose');
+    const spread = best - worst > 0.01;
+    if (isArb) {
+      const range = spread ? ` (${money(worst - spent)} to ${money(best - spent)}, depending on who wins)` : '';
+      C.verdict.innerHTML = `<div class="big">+${money(profit)}</div><div class="lbl">Guaranteed profit whoever wins${range} · ${pct.toFixed(2)}% return on ${money(spent)} bet</div>`;
+    } else if (calc.data.linesMatch) {
+      const lossLo = spent - best, lossHi = spent - worst;
+      const range = spread ? ` (between ${money(Math.max(0, lossLo))} and ${money(lossHi)}, depending on who wins)` : '';
+      C.verdict.innerHTML = `<div class="big">−${money(Math.max(0, lossHi))}</div><div class="lbl">Not an arb. Whoever wins, you lose money${range} · ${money(spent)} bet in total</div>`;
+    } else {
+      C.verdict.innerHTML = `<div class="big">${profit >= 0 ? '+' : '−'}${money(Math.abs(profit))}</div><div class="lbl">Result if exactly one bet wins. If the final score lands between the two lines, both bets lose. · ${money(spent)} bet in total</div>`;
+    }
+    // What it would take to become an arb (or how much room there is)
+    if (!calc.data.linesMatch) {
+      C.flip.innerHTML = '';
+    } else if (sum >= 1) {
+      const tips = decs.map((d, i) => {
+        const need = flipPrice(i, decs);
+        if (!need) return null;
+        let txt;
+        if (state.format === 'decimal') txt = (Math.floor(need * 100) / 100 + 0.01).toFixed(2);
+        else {
+          // First whole American price that actually beats break-even
+          const raw = need >= 2 ? (need - 1) * 100 : -100 / (need - 1);
+          let a = Math.floor(raw + 1e-9) + 1; // strictly better than break-even
+          if (a > -100 && a < 100) a = a < 0 ? 100 : a; // -99..99 don't exist in American odds
+          txt = a > 0 ? '+' + a : String(a);
+        }
+        return `<b>${esc(calc.data.sides[i].label)}</b> at <b>${esc(txt)}</b> or better`;
+      }).filter(Boolean);
+      C.flip.innerHTML = tips.length ? `To turn this into an arb, any one of these would do (with the other prices unchanged):<br>• ${tips.join('<br>• ')}` : '';
+    } else {
+      C.flip.innerHTML = `This is an arb because the best prices add up to <b>${(sum * 100).toFixed(2)}%</b>, which is under 100%. Place every bet quickly, before any price moves.`;
+    }
+  }
+
+  els.board.addEventListener('click', (e) => { const b = e.target.closest('[data-calc]'); if (b) openCalc(b.dataset.calc); });
+  C.stake.addEventListener('input', computeCalc);
+  document.getElementById('cPresets').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; C.stake.value = b.dataset.v; computeCalc(); });
+  C.round.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    calc.round = Number(b.dataset.v);
+    C.round.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    computeCalc();
+  });
+  C.sides.addEventListener('input', (e) => {
+    const inp = e.target.closest('input[data-i]'); if (!inp) return;
+    const i = Number(inp.dataset.i);
+    calc.prices[i] = parseOdds(inp.value);
+    calc.edited[i] = true;
+    inp.parentElement.classList.add('edited');
+    computeCalc();
+  });
+  document.getElementById('cReset').addEventListener('click', () => {
+    const latest = calcData.get(calc.id) || calc.data;
+    Object.assign(calc, { data: latest, prices: latest.sides.map((x) => x.dec), edited: latest.sides.map(() => false) });
+    buildSides(); computeCalc();
+  });
+  document.getElementById('cClose').addEventListener('click', closeCalc);
+  C.scrim.addEventListener('click', closeCalc);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && calc.open) { e.preventDefault(); closeCalc(); } });
 
   // ---------- Player props drawer ----------
   const P = {
@@ -802,7 +1024,7 @@
   P.search.addEventListener('input', (e) => { props.query = e.target.value; renderProps(); });
   document.getElementById('pClose').addEventListener('click', closeProps);
   P.scrim.addEventListener('click', closeProps);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && props.open) closeProps(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && props.open && !e.defaultPrevented) closeProps(); });
 
   // ---------- Events ----------
   function bindSeg(id, key, after) {
