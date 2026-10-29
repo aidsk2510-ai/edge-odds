@@ -133,6 +133,12 @@
   .wx .roof { color: var(--faint); }
   .wx.bad { border-color: rgba(76, 195, 255, 0.45); }
 
+  .epa { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); vertical-align: 1px; white-space: nowrap; cursor: help; }
+  .epa i { font-style: normal; color: var(--faint); font-weight: 500; }
+  .epa.pos { color: var(--up); border-color: rgba(53, 208, 127, 0.35); }
+  .epa.neg { color: var(--down); border-color: rgba(255, 107, 107, 0.35); }
+  .epa .lbl { font-family: 'Inter Tight', sans-serif; font-size: 10px; letter-spacing: 0.05em; color: var(--faint); }
+
   /* Player props */
   .propsbtn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 3px 9px; font-size: 12px; font-weight: 600; }
   .propsbtn:hover { border-color: var(--accent); color: var(--accent); }
@@ -166,7 +172,9 @@
     .bar { flex-wrap: wrap; gap: 10px; }
     .sports { flex-basis: 100%; order: 3; }
     th.sel, td.sel { min-width: 150px; }
-    td.sel { font-size: 13px; white-space: normal; }
+    table { min-width: 0; }
+    td.sel { font-size: 13px; white-space: normal; max-width: 160px; }
+    td.sel .epa { display: flex; width: max-content; margin: 4px 0 0; }
     .board { max-height: none; }
   }
 </style>
@@ -395,7 +403,16 @@
           if (weather.code >= 71 && weather.tempF > 34) weather.tempF = 30;
           if (i >= 7) weather = { type: weather.type, later: true };
         }
-        events.push({ id: `${sportKey}-${i}-${hour}`, sport_key: sportKey, commence_time: new Date(start).toISOString(), home_team: home, away_team: away, bookmakers, weather });
+        let epa = null;
+        if (sport.kind === 'nfl' || sport.kind === 'ncaaf') {
+          const n = sport.kind === 'nfl' ? 32 : 136;
+          const er = rng(`${sportKey}:epa:${Math.floor(hour / 24)}`);
+          const table = TEAMS[sport.kind].map((t) => { const off = (er() - 0.5) * 0.4, def = (er() - 0.5) * 0.3; return { t, off, def, net: off - def }; });
+          const rankOf = (t, key, desc) => [...table].sort((a, b) => (desc ? b[key] - a[key] : a[key] - b[key])).findIndex((x) => x.t === t) + 1;
+          const pick = (team) => { const x = table.find((y) => y.t === team); return { net: x.net, off: x.off, def: x.def, netRank: Math.ceil(rankOf(team, 'net', true) * n / table.length), offRank: Math.ceil(rankOf(team, 'off', true) * n / table.length), defRank: Math.ceil(rankOf(team, 'def', false) * n / table.length) }; };
+          epa = { home: pick(home), away: pick(away), of: n, through: 'Week 8', season: 2026 };
+        }
+        events.push({ id: `${sportKey}-${i}-${hour}`, sport_key: sportKey, commence_time: new Date(start).toISOString(), home_team: home, away_team: away, bookmakers, weather, epa });
       }
       return { events };
     }
@@ -531,6 +548,15 @@
     return rows;
   }
 
+  // Team EPA/play chip: net (offense minus defense) with rank; details in the tooltip.
+  const sgn = (x) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(2);
+  function epaChip(t, meta, short) {
+    if (!t) return '';
+    const cls = t.net >= 0.05 ? 'pos' : t.net <= -0.05 ? 'neg' : '';
+    const tip = `Net EPA/play ${sgn(t.net)} (#${t.netRank} of ${meta.of})\nOffense ${sgn(t.off)} per play (#${t.offRank})\nDefense ${sgn(t.def)} per play allowed (#${t.defRank}, lower is better)\n${meta.season} season${meta.through ? ' through ' + meta.through : ''}`;
+    return `<span class="epa ${cls}" title="${esc(tip)}">${short ? `<span class="lbl">${esc(short)}</span>` : '<span class="lbl">EPA</span>'}${sgn(t.net)}<i>#${t.netRank}</i></span>`;
+  }
+
   // WMO weather codes -> [icon, words]
   function wxLabel(code) {
     if (code === 0) return ['☀️', 'Clear'];
@@ -558,6 +584,7 @@
     return `<span class="wx ${bad ? 'bad' : ''}" title="${esc(words)}${extra ? ' · ' + esc(extra) : ''}${note}"><span class="ic">${ic}</span><b>${w.tempF}°F</b>${esc(words)}${extra ? ' · ' + esc(extra) : ''} ${roof}${where}</span>`;
   }
 
+  const nickOf = (team) => team.split(' ').slice(-1)[0];
   const timeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
   function render() {
@@ -617,11 +644,12 @@
       const holdHtml = hold == null ? '' : `<span class="hold ${isArb ? 'arb' : ''}" title="Combined margin if you take the best price on every side">${isArb ? 'ARB ' : 'Best-line hold '}${(hold * 100).toFixed(1)}%</span>`;
       const title = sport.kind === 'soccer' ? `${ev.home_team} vs ${ev.away_team}` : sport.kind === 'mma' ? `${ev.away_team} vs ${ev.home_team}` : `${ev.away_team} @ ${ev.home_team}`;
 
-      html += `<tr class="ev"><td class="sel" colspan="${books.length + 2}"><div class="evhead">${ev.live ? '<span class="livepill">LIVE</span>' : `<span class="evtime">${esc(timeFmt.format(new Date(ev.commence_time)))}</span>`}<span class="evtitle">${esc(title)}</span>${weatherChip(ev.weather)}<span class="push">${holdHtml}${PROPS[sport.kind] ? `<button class="propsbtn" data-ev="${esc(ev.id)}">Player props ›</button>` : ''}</span></div></td></tr>`;
+      html += `<tr class="ev"><td class="sel" colspan="${books.length + 2}"><div class="evhead">${ev.live ? '<span class="livepill">LIVE</span>' : `<span class="evtime">${esc(timeFmt.format(new Date(ev.commence_time)))}</span>`}<span class="evtitle">${esc(title)}</span>${state.market === 'totals' && ev.epa ? epaChip(ev.epa.away, ev.epa, nickOf(ev.away_team)) + epaChip(ev.epa.home, ev.epa, nickOf(ev.home_team)) : ''}${weatherChip(ev.weather)}<span class="push">${holdHtml}${PROPS[sport.kind] ? `<button class="propsbtn" data-ev="${esc(ev.id)}">Player props ›</button>` : ''}</span></div></td></tr>`;
 
       rows.forEach((row, i) => {
         const { best, bestBook } = bests[i];
-        html += `<tr><td class="sel">${esc(row.label)}</td><td class="bestcol">${best ? `<div class="bestcell"><span class="px">${best.point != null ? `<span class="pt">${fmtPoint(best.point, state.market)}</span>` : ''}${fmtPrice(best.price)}</span><small>${esc(BOOKS[bestBook.key]?.[0] || bestBook.title)}</small></div>` : '<span class="px none">—</span>'}</td>`;
+        const teamEpa = ev.epa && (row.name === ev.home_team ? ev.epa.home : row.name === ev.away_team ? ev.epa.away : null);
+        html += `<tr><td class="sel">${esc(row.label)}${teamEpa ? epaChip(teamEpa, ev.epa) : ''}</td><td class="bestcol">${best ? `<div class="bestcell"><span class="px">${best.point != null ? `<span class="pt">${fmtPoint(best.point, state.market)}</span>` : ''}${fmtPrice(best.price)}</span><small>${esc(BOOKS[bestBook.key]?.[0] || bestBook.title)}</small></div>` : '<span class="px none">—</span>'}</td>`;
         for (const b of books) {
           const bm = ev.bookmakers.find((x) => x.key === b.key);
           const o = bm?.markets[0].outcomes.find((x) => x.name === row.name);
