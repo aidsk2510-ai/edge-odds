@@ -376,6 +376,8 @@ async function writePicksNote(sport, r) {
 const ASK_MODEL = process.env.ANTHROPIC_CHAT_MODEL || AI_MODEL;
 const ASK_LIMIT_PER_MIN = Number(process.env.ASK_PER_MINUTE) || 6;
 const ASK_LIMIT_PER_DAY = Number(process.env.ASK_PER_DAY) || 60;
+const ASK_HORIZON_DAYS = Number(process.env.ASK_HORIZON_DAYS) || 7; // how far ahead Ask Edge can see
+const ASK_MAX_BETS = 700; // keeps each question small and cheap even on a busy week
 const askHits = new Map(); // visitor ip -> timestamps of recent questions
 
 function askAllowed(req) {
@@ -403,7 +405,18 @@ function askContext(sport) {
   return cached(`askctx:${sport}`, 60e3, async () => {
     const boards = await Promise.all(PICK_MARKETS.map((m) => getOdds(sport, m).catch(() => null)));
     const events = mergeBoards(boards);
-    const r = globalThis.EdgePicks.analyze(events, { markets: PICK_MARKETS, horizonHours: 48, maxSingles: 6, maxParlays: 3 });
+    const r = globalThis.EdgePicks.analyze(events, { markets: PICK_MARKETS, horizonHours: ASK_HORIZON_DAYS * 24, maxSingles: 6, maxParlays: 3 });
+    // Keep only each game's main line per bet type (the number most sportsbooks are offering), soonest games first.
+    const mainLine = new Map();
+    for (const x of r.sides) {
+      const k = `${x.eventId}|${x.market}`;
+      if (!mainLine.has(k) || x.books > mainLine.get(k).books) mainLine.set(k, { line: x.line, books: x.books });
+    }
+    let kept = r.sides.filter((x) => mainLine.get(`${x.eventId}|${x.market}`).line === x.line)
+      .sort((a, b) => new Date(a.start) - new Date(b.start));
+    let cutoff = null;
+    if (kept.length > ASK_MAX_BETS) { cutoff = kept[ASK_MAX_BETS].start; kept = kept.filter((x) => x.start < cutoff); }
+    r.sides = kept;
     const titles = {};
     for (const ev of events) for (const b of ev.bookmakers) titles[b.key] = b.title;
     const epa = await soon(epaFinder(sport), 800);
@@ -422,16 +435,19 @@ function askContext(sport) {
       const ep = e && e.home && e.away ? ` | Team EPA/play (net, rank of ${e.of}): ${ev.away_team} ${e.away.net.toFixed(2)} #${e.away.netRank}, ${ev.home_team} ${e.home.net.toFixed(2)} #${e.home.netRank}` : '';
       lines.push(`GAME ${ev.away_team} @ ${ev.home_team} | ${etTime(ev.commence_time)} ET${wx}${ep}`);
       for (const x of sides.sort((a, b) => a.market.localeCompare(b.market))) {
-        const id = `S${++si}`;
+        const id = `S${++si}`; // each game's main line only
         ids[id] = x;
         lines.push(`  ${id} ${x.market === 'h2h' ? 'Moneyline' : x.market === 'spreads' ? 'Spread' : 'Total'}: ${x.pick} | best ${x.bestOdds} at ${x.best.title} | fair chance ${(x.fair * 100).toFixed(1)}% (fair price ${x.fairOdds}) | edge ${(x.edge * 100).toFixed(1)}% | ${x.books} books`);
       }
     }
-    const idOf = (x) => Object.keys(ids).find((k) => ids[k] === x);
-    const top = r.singles.map((x) => `${idOf(x)} ${x.pick} ${x.bestOdds} at ${x.best.title} (edge ${(x.edge * 100).toFixed(1)}%)`).join('; ');
+    const soonest = globalThis.EdgePicks.analyze(events, { markets: PICK_MARKETS, maxSingles: 6, maxParlays: 3 });
+    const idOf = (x) => Object.keys(ids).find((k) => { const y = ids[k]; return y.eventId === x.eventId && y.market === x.market && y.pick === x.pick; }) || '';
+    r.singles = soonest.singles; r.parlays = soonest.parlays;
+    const top = r.singles.filter((x) => idOf(x)).map((x) => `${idOf(x)} ${x.pick} ${x.bestOdds} at ${x.best.title} (edge ${(x.edge * 100).toFixed(1)}%)`).join('; ');
     const tp = r.parlays.map((p) => `${p.legs.map((l) => l.pick).join(' + ')} at ${p.title} ${p.odds}, hits ${(p.hit * 100).toFixed(1)}%, edge ${(p.ev * 100).toFixed(1)}%`).join('; ');
-    const text = `${lines.join('\n')}\n\nSITE'S TOP SINGLES: ${top || 'none'}\nSITE'S TOP PARLAYS: ${tp || 'none'}`;
-    return { text, ids, titles, games: gi, at: new Date().toISOString() };
+    const through = cutoff ? `games starting before ${etTime(cutoff)} ET` : `the next ${ASK_HORIZON_DAYS} days`;
+    const text = `${lines.join('\n')}\n\nSITE'S TOP SINGLES (next 36 hours): ${top || 'none'}\nSITE'S TOP PARLAYS (next 36 hours): ${tp || 'none'}`;
+    return { text, ids, titles, games: gi, through, at: new Date().toISOString() };
   });
 }
 
@@ -487,7 +503,7 @@ How to answer:
 - Copy prices and sportsbook names exactly. For any parlay or payout question, call the price_bet tool with bet IDs. Never do parlay math yourself. Do not show bet IDs (like S3) to the user.
 - "Best bet" means the best price compared with the fair chance, not a sure winner. Say the chance of winning when you recommend something. Never promise a win or call anything a lock or guaranteed.
 - You only see odds plus the weather and team EPA shown here. You do not know injuries, lineups, news, player stats, records, or trends. If asked, say so and suggest checking the latest news.
-- Only the games listed are available (upcoming in the next 48 hours; live games are not included). If asked about anything else, say it is not on the board right now.
+- Only the games listed are available (${ctx.through}; live games are not included). Games further out may not have prices yet. If asked about anything else, say it is not on the board right now.
 - A parlay must be placed at one sportsbook. Legs from the same game are usually not allowed as a normal parlay.
 - If someone mentions chasing losses, betting money they need, or feeling out of control, be kind, suggest taking a break, and share the 1-800-GAMBLER helpline.
 - Stay on sports betting and this site. Politely decline unrelated requests.
