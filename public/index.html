@@ -127,6 +127,32 @@
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
+  /* Player props */
+  .propsbtn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 3px 9px; font-size: 12px; font-weight: 600; }
+  .propsbtn:hover { border-color: var(--accent); color: var(--accent); }
+  .hold { margin-left: 0; }
+  .evhead .push { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); z-index: 40; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+  .scrim.open { opacity: 1; pointer-events: auto; }
+  aside.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(1100px, 100vw); z-index: 41; background: var(--bg); border-left: 1px solid var(--line); display: flex; flex-direction: column; transform: translateX(100%); transition: transform 0.25s ease; }
+  aside.drawer.open { transform: none; }
+  .dhead { padding: 16px 20px 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; }
+  .dtitle { display: flex; align-items: center; gap: 10px; }
+  .dtitle h2 { margin: 0; font-size: 17px; font-weight: 700; }
+  .dtitle .x { margin-left: auto; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; width: 32px; height: 32px; font-size: 18px; line-height: 1; color: var(--muted); }
+  .dtitle .x:hover { color: var(--text); }
+  .pmarkets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pmarkets button { border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .pmarkets button[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .drow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .drow .search { max-width: 260px; }
+  .dbody { flex: 1; overflow: auto; padding: 14px 20px 24px; }
+  .dbody .board { max-height: none; }
+  .side { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; margin-left: 8px; vertical-align: 1px; }
+  tr.p2 td { border-top-color: transparent; }
+  tr.pfirst td { border-top: 1px solid var(--line); }
+  body.locked { overflow: hidden; }
+
   footer { border-top: 1px solid var(--line); color: var(--faint); font-size: 12px; }
   footer .bar { justify-content: space-between; flex-wrap: wrap; padding: 18px 20px; }
 
@@ -183,6 +209,16 @@
   </div>
 </main>
 
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true" aria-label="Player props">
+  <div class="dhead">
+    <div class="dtitle"><span id="pWhen"></span><h2 id="pTitle">Player props</h2><button class="x" id="pClose" aria-label="Close">×</button></div>
+    <div class="pmarkets" id="pMarkets"></div>
+    <div class="drow"><input class="search" id="pSearch" type="search" placeholder="Search players…" autocomplete="off"><span class="status" id="pStatus"></span></div>
+  </div>
+  <div class="dbody"><div class="board" id="pBoard"></div></div>
+</aside>
+
 <footer>
   <div class="bar">
     <span>Odds change quickly; always confirm at the sportsbook before placing a bet. Availability varies by state.</span>
@@ -215,6 +251,15 @@
     mybookieag: ['MyBookie', '#e04f1a'], betus: ['BetUS', '#2c63c9'], fliff: ['Fliff', '#7b61ff'],
   };
   const REFRESH_S = 30;
+  // Player prop markets offered per sport kind: [market key, label]
+  const FOOTBALL_PROPS = [['player_pass_yds','Pass Yds'],['player_rush_yds','Rush Yds'],['player_reception_yds','Rec Yds'],['player_receptions','Receptions'],['player_pass_tds','Pass TDs'],['player_anytime_td','Anytime TD']];
+  const HOOPS_PROPS = [['player_points','Points'],['player_rebounds','Rebounds'],['player_assists','Assists'],['player_threes','Threes'],['player_points_rebounds_assists','Pts+Reb+Ast']];
+  const PROPS = {
+    nfl: FOOTBALL_PROPS, ncaaf: FOOTBALL_PROPS, nba: HOOPS_PROPS, ncaab: HOOPS_PROPS,
+    nhl: [['player_points','Points'],['player_shots_on_goal','Shots on Goal'],['player_goal_scorer_anytime','Anytime Goal'],['player_assists','Assists']],
+    mlb: [['batter_hits','Hits'],['batter_home_runs','Home Runs'],['batter_total_bases','Total Bases'],['pitcher_strikeouts','Strikeouts']],
+    soccer: [['player_goal_scorer_anytime','Anytime Scorer'],['player_shots_on_target','Shots on Target']],
+  };
 
   // ---------- State ----------
   const store = (() => { try { return window.localStorage; } catch { return null; } })();
@@ -337,7 +382,59 @@
       }
       return { events };
     }
-    return { generate };
+    // Simulated player props. Players are labelled by team + role so nobody mistakes them for real lines.
+    const ROLES = {
+      nfl: { player_pass_yds: ['QB'], player_pass_tds: ['QB'], player_rush_yds: ['RB1', 'RB2', 'QB'], player_reception_yds: ['WR1', 'WR2', 'TE'], player_receptions: ['WR1', 'WR2', 'TE', 'RB1'], _: ['QB', 'RB1', 'WR1', 'WR2', 'TE'] },
+      nba: { _: ['PG', 'SG', 'SF', 'PF', 'C'] }, nhl: { _: ['C1', 'LW1', 'RW1', 'D1'] },
+      mlb: { pitcher_strikeouts: ['SP'], _: ['SS', '1B', 'CF', 'DH'] }, soccer: { _: ['ST', 'LW', 'CAM'] },
+    };
+    ROLES.ncaaf = ROLES.nfl; ROLES.ncaab = ROLES.nba;
+    // [min line, max line, step] for over/under markets; 'yes' for yes-only markets with [min price, max price]
+    const PROP_LINES = {
+      player_pass_yds: [185, 295, 0.5], player_rush_yds: [28, 92, 0.5], player_reception_yds: [24, 88, 0.5], player_receptions: [2.5, 7.5, 1], player_pass_tds: [0.5, 2.5, 1],
+      player_points: [8.5, 31.5, 1], player_rebounds: [3.5, 12.5, 1], player_assists: [1.5, 9.5, 1], player_threes: [0.5, 3.5, 1], player_points_rebounds_assists: [15.5, 44.5, 1],
+      player_shots_on_goal: [1.5, 4.5, 1], batter_hits: [0.5, 1.5, 1], batter_home_runs: [0.5, 0.5, 1], batter_total_bases: [1.5, 2.5, 1], pitcher_strikeouts: [4.5, 8.5, 1],
+      player_shots_on_target: [0.5, 1.5, 1],
+    };
+    const YES_PRICES = { player_anytime_td: [1.7, 5.5], player_goal_scorer_anytime: [2.2, 7.5] };
+    const nick = (team) => team.split(' ').slice(-1)[0];
+
+    function props(sportKey, ev, market) {
+      const sport = sportOf(sportKey);
+      const roles = ROLES[sport.kind]?.[market] || ROLES[sport.kind]?._ || [];
+      const hour = Math.floor(Date.now() / 3600000);
+      const tick = Math.floor(Date.now() / (REFRESH_S * 1000));
+      const players = [];
+      for (const team of [ev.away_team, ev.home_team]) for (const role of roles) players.push(`${nick(team)} ${role}`);
+      const bookmakers = [];
+      for (const bk of BOOK_KEYS) {
+        const outcomes = [];
+        for (const pl of players) {
+          const r = rng(`${ev.id}:${market}:${pl}`);
+          const br = rng(`${ev.id}:${market}:${pl}:${bk}:${hour}`);
+          if (br() < 0.15) continue; // this book hasn't posted this player
+          const jr = rng(`${ev.id}:${market}:${pl}:${bk}:${tick}`);
+          const m = 0.04 + (BOOK_KEYS.indexOf(bk) % 3) * 0.01;
+          if (YES_PRICES[market]) {
+            const [lo, hi] = YES_PRICES[market];
+            const fair = lo + r() * (hi - lo);
+            outcomes.push({ name: 'Yes', description: pl, price: +(fair * (1 - m) * (1 + (br() - 0.5) * 0.12)).toFixed(2) });
+          } else {
+            const [lo, hi, step] = PROP_LINES[market] || [0.5, 3.5, 1];
+            let line = Math.round((lo + r() * (hi - lo) - 0.5) / step) * step + 0.5;
+            line = Math.min(hi, Math.max(lo, line));
+            if (br() < 0.3 && hi > lo) line += br() < 0.5 ? step : -step;
+            line = Math.max(0.5, line);
+            const p = 0.5 + (br() - 0.5) * 0.08 + (jr() < 0.15 ? (jr() - 0.5) * 0.02 : 0);
+            outcomes.push({ name: 'Over', description: pl, point: line, price: dec(p, m) }, { name: 'Under', description: pl, point: line, price: dec(1 - p, m) });
+          }
+        }
+        if (outcomes.length) bookmakers.push({ key: bk, title: BOOKS[bk][0], markets: [{ key: market, outcomes }] });
+      }
+      return { ...ev, bookmakers };
+    }
+
+    return { generate, props };
   })();
 
   // ---------- Data ----------
@@ -476,7 +573,7 @@
       const holdHtml = hold == null ? '' : `<span class="hold ${isArb ? 'arb' : ''}" title="Combined margin if you take the best price on every side">${isArb ? 'ARB ' : 'Best-line hold '}${(hold * 100).toFixed(1)}%</span>`;
       const title = sport.kind === 'soccer' ? `${ev.home_team} vs ${ev.away_team}` : sport.kind === 'mma' ? `${ev.away_team} vs ${ev.home_team}` : `${ev.away_team} @ ${ev.home_team}`;
 
-      html += `<tr class="ev"><td class="sel" colspan="${books.length + 2}"><div class="evhead">${ev.live ? '<span class="livepill">LIVE</span>' : `<span class="evtime">${esc(timeFmt.format(new Date(ev.commence_time)))}</span>`}<span class="evtitle">${esc(title)}</span>${holdHtml}</div></td></tr>`;
+      html += `<tr class="ev"><td class="sel" colspan="${books.length + 2}"><div class="evhead">${ev.live ? '<span class="livepill">LIVE</span>' : `<span class="evtime">${esc(timeFmt.format(new Date(ev.commence_time)))}</span>`}<span class="evtitle">${esc(title)}</span><span class="push">${holdHtml}${PROPS[sport.kind] ? `<button class="propsbtn" data-ev="${esc(ev.id)}">Player props ›</button>` : ''}</span></div></td></tr>`;
 
       rows.forEach((row, i) => {
         const { best, bestBook } = bests[i];
@@ -503,6 +600,130 @@
     els.board.innerHTML = html;
   }
 
+  // ---------- Player props drawer ----------
+  const P = {
+    drawer: document.getElementById('drawer'), scrim: document.getElementById('scrim'), title: document.getElementById('pTitle'),
+    when: document.getElementById('pWhen'), markets: document.getElementById('pMarkets'), board: document.getElementById('pBoard'),
+    status: document.getElementById('pStatus'), search: document.getElementById('pSearch'),
+  };
+  const props = { open: false, ev: null, sport: null, market: null, data: null, prev: new Map(), query: '', error: null, ready: false, token: 0 };
+
+  function openProps(evId) {
+    const ev = state.events.find((e) => e.id === evId);
+    const sport = sportOf(state.sport);
+    if (!ev || !PROPS[sport.kind]) return;
+    Object.assign(props, { open: true, ev, sport: state.sport, data: null, prev: new Map(), query: '', error: null, ready: false });
+    P.board.innerHTML = '';
+    if (!PROPS[sport.kind].some(([k]) => k === props.market)) props.market = PROPS[sport.kind][0][0];
+    P.search.value = '';
+    const title = sport.kind === 'soccer' ? `${ev.home_team} vs ${ev.away_team}` : `${ev.away_team} @ ${ev.home_team}`;
+    P.title.textContent = title;
+    const live = new Date(ev.commence_time).getTime() <= Date.now();
+    P.when.innerHTML = live ? '<span class="livepill">LIVE</span>' : `<span class="evtime">${esc(timeFmt.format(new Date(ev.commence_time)))}</span>`;
+    P.markets.innerHTML = PROPS[sport.kind].map(([k, label]) => `<button data-m="${k}" aria-pressed="${k === props.market}">${esc(label)}</button>`).join('');
+    P.drawer.classList.add('open'); P.scrim.classList.add('open'); P.drawer.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('locked');
+    loadProps();
+  }
+  function closeProps() {
+    props.open = false;
+    P.drawer.classList.remove('open'); P.scrim.classList.remove('open'); P.drawer.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('locked');
+  }
+
+  async function loadProps() {
+    if (!props.open) return;
+    const token = (props.token = (props.token || 0) + 1); // ignore replies to stale requests
+    P.status.textContent = 'Loading…';
+    let data = null, error = null;
+    try {
+      if (state.demo) {
+        data = Demo.props(props.sport, props.ev, props.market);
+      } else {
+        const res = await fetch(`/api/props?sport=${encodeURIComponent(props.sport)}&event=${encodeURIComponent(props.ev.id)}&market=${props.market}`);
+        const body = await res.json();
+        if (!res.ok || body.error) throw new Error(body.error || `HTTP ${res.status}`);
+        data = body.event;
+        if (body.quota?.remaining) state.quota = body.quota;
+      }
+    } catch (e) {
+      error = 'Couldn\u2019t load props right now. Try again in a minute.';
+    }
+    if (!props.open || token !== props.token) return;
+    props.data = data; props.error = error; props.ready = true;
+    renderProps();
+  }
+
+  function renderProps() {
+    if (!props.ready) return;
+    const t = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+    P.status.textContent = state.demo ? `Demo data · ${t}` : `Updated ${t}`;
+    if (props.error) { P.board.innerHTML = `<div class="empty"><b>Something went wrong</b>${esc(props.error)}</div>`; return; }
+    const bookmakers = (props.data?.bookmakers || []).filter((b) => b.markets?.some((m) => m.key === props.market));
+    const label = PROPS[sportOf(props.sport).kind].find(([k]) => k === props.market)?.[1] || 'props';
+    if (!bookmakers.length) { P.board.innerHTML = `<div class="empty"><b>No ${esc(label.toLowerCase())} props yet</b>Sportsbooks usually post player props closer to game time. Try another stat or check back later.</div>`; return; }
+
+    const books = bookColumns([{ bookmakers }]).filter((b) => !state.hiddenBooks.has(b.key));
+    // Group outcomes: player -> side -> book -> outcome
+    const players = new Map();
+    for (const b of bookmakers) {
+      for (const o of b.markets.find((m) => m.key === props.market).outcomes) {
+        const who = o.description || o.name;
+        const side = o.description ? o.name : 'Yes';
+        if (!players.has(who)) players.set(who, new Map());
+        const sides = players.get(who);
+        if (!sides.has(side)) sides.set(side, new Map());
+        sides.get(side).set(b.key, o);
+      }
+    }
+    const q = props.query.trim().toLowerCase();
+    const rows = [...players.entries()]
+      .filter(([who]) => !q || who.toLowerCase().includes(q))
+      .map(([who, sides]) => ({ who, sides, n: Math.max(...[...sides.values()].map((s) => s.size)) }))
+      .sort((a, b) => b.n - a.n || a.who.localeCompare(b.who));
+    if (!rows.length) { P.board.innerHTML = `<div class="empty"><b>No players match</b>Try a different name.</div>`; return; }
+
+    const order = (s) => ({ Over: 0, Yes: 0, Under: 1, No: 1 }[s] ?? 2);
+    const nextPrev = new Map();
+    let html = `<table><thead><tr><th class="sel">${esc(label)}</th><th class="bestcol">Best</th>` +
+      books.map((b) => `<th><span class="bk"><i style="background:${b.color}"></i>${esc(b.title)}</span></th>`).join('') + `</tr></thead><tbody>`;
+    for (const { who, sides } of rows) {
+      [...sides.keys()].sort((a, b) => order(a) - order(b)).forEach((side, idx) => {
+        const byBook = sides.get(side);
+        const mkt = side === 'Over' || side === 'Under' ? 'totals' : 'h2h';
+        let best = null, bestBook = null;
+        for (const [bk, o] of byBook) if (!state.hiddenBooks.has(bk) && better(o, best, mkt, side)) { best = o; bestBook = bk; }
+        const pt = (o) => (o.point != null ? `<span class="pt">${side === 'Over' ? 'O' : side === 'Under' ? 'U' : ''} ${o.point}</span>` : '');
+        html += `<tr class="${idx ? 'p2' : 'pfirst'}"><td class="sel">${idx ? '' : esc(who)}<span class="side">${esc(side)}</span></td><td class="bestcol">${best ? `<div class="bestcell"><span class="px">${pt(best)}${fmtPrice(best.price)}</span><small>${esc(BOOKS[bestBook]?.[0] || bestBook)}</small></div>` : '<span class="px none">—</span>'}</td>`;
+        for (const b of books) {
+          const o = byBook.get(b.key);
+          if (!o) { html += `<td><span class="px none">—</span></td>`; continue; }
+          const key = `${who}|${side}|${b.key}`, sig = `${o.price}/${o.point ?? ''}`;
+          nextPrev.set(key, { sig, price: o.price });
+          const was = props.prev.get(key);
+          const move = was && was.sig !== sig ? (o.price > was.price ? 'up' : o.price < was.price ? 'down' : '') : '';
+          const isBest = best && o.price === best.price && (o.point ?? null) === (best.point ?? null);
+          html += `<td><span class="px ${isBest ? 'best' : ''} ${move}">${pt(o)}<span>${fmtPrice(o.price)}${move ? `<span class="arrow ${move}">${move === 'up' ? '▲' : '▼'}</span>` : ''}</span></span></td>`;
+        }
+        html += `</tr>`;
+      });
+    }
+    P.board.innerHTML = html + `</tbody></table>`;
+    props.prev = nextPrev;
+  }
+
+  els.board.addEventListener('click', (e) => { const b = e.target.closest('.propsbtn'); if (b) openProps(b.dataset.ev); });
+  P.markets.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b || b.dataset.m === props.market) return;
+    props.market = b.dataset.m; props.prev = new Map(); props.ready = false;
+    P.markets.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.m === props.market)));
+    P.board.innerHTML = ''; loadProps();
+  });
+  P.search.addEventListener('input', (e) => { props.query = e.target.value; renderProps(); });
+  document.getElementById('pClose').addEventListener('click', closeProps);
+  P.scrim.addEventListener('click', closeProps);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && props.open) closeProps(); });
+
   // ---------- Events ----------
   function bindSeg(id, key, after) {
     const el = document.getElementById(id);
@@ -524,7 +745,7 @@
     const b = e.target.closest('.chip'); if (!b) return;
     const k = b.dataset.book;
     state.hiddenBooks.has(k) ? state.hiddenBooks.delete(k) : state.hiddenBooks.add(k);
-    savePrefs(); render();
+    savePrefs(); render(); if (props.open) renderProps();
   });
   els.search.addEventListener('input', (e) => { state.query = e.target.value; render(); });
   els.refresh.addEventListener('click', load);
@@ -533,7 +754,7 @@
   setInterval(() => {
     if (document.hidden) return;
     countdown -= 1;
-    if (countdown <= 0) load();
+    if (countdown <= 0) { load(); loadProps(); }
     els.countdown.textContent = `${Math.max(0, countdown)}s`;
   }, 1000);
 
