@@ -31,6 +31,20 @@ const MAJOR_SPORTS = new Set([
 ]);
 const MARKETS = new Set(['h2h', 'spreads', 'totals']);
 
+// Player props: fetched per game, one market at a time, only when someone opens them.
+const PROPS_TTL = (Number(process.env.PROPS_CACHE_SECONDS) || 600) * 1000;
+const PROPS_LIVE_TTL = (Number(process.env.PROPS_LIVE_CACHE_SECONDS) || 60) * 1000;
+const FOOTBALL_PROPS = ['player_pass_yds', 'player_rush_yds', 'player_reception_yds', 'player_receptions', 'player_pass_tds', 'player_anytime_td'];
+const HOOPS_PROPS = ['player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_points_rebounds_assists'];
+const SOCCER_PROPS = ['player_goal_scorer_anytime', 'player_shots_on_target'];
+const PROP_MARKETS = {
+  americanfootball_nfl: FOOTBALL_PROPS, americanfootball_ncaaf: FOOTBALL_PROPS,
+  basketball_nba: HOOPS_PROPS, basketball_ncaab: HOOPS_PROPS, basketball_wnba: HOOPS_PROPS,
+  icehockey_nhl: ['player_points', 'player_shots_on_goal', 'player_goal_scorer_anytime', 'player_assists'],
+  baseball_mlb: ['batter_hits', 'batter_home_runs', 'batter_total_bases', 'pitcher_strikeouts'],
+  soccer_epl: SOCCER_PROPS, soccer_uefa_champs_league: SOCCER_PROPS, soccer_spain_la_liga: SOCCER_PROPS, soccer_usa_mls: SOCCER_PROPS,
+};
+
 const cache = new Map(); // key -> { at, body, inflight }
 
 async function upstream(path, params) {
@@ -113,8 +127,40 @@ async function handleApi(req, res, url) {
     return sendJSON(res, 200, body, Math.floor((body.live ? LIVE_TTL : ODDS_TTL) / 2000));
   }
 
+  if (url.pathname === '/api/props') {
+    const sport = url.searchParams.get('sport');
+    const event = url.searchParams.get('event') || '';
+    const market = url.searchParams.get('market');
+    if (!PROP_MARKETS[sport]?.includes(market)) return sendJSON(res, 400, { error: 'unknown_market' });
+    if (!/^[a-zA-Z0-9]{8,64}$/.test(event)) return sendJSON(res, 400, { error: 'bad_event' });
+
+    const body = await cached(`props:${event}:${market}`,
+      (b) => (b.live ? PROPS_LIVE_TTL : Math.max(PROPS_LIVE_TTL, Math.min(PROPS_TTL, b.start - Date.now()))),
+      async () => {
+        const now = Date.now();
+        try {
+          const { data, quota } = await upstream(`/v4/sports/${sport}/events/${event}/odds`, {
+            regions: REGIONS, markets: market, oddsFormat: 'decimal', dateFormat: 'iso',
+          });
+          const start = new Date(data.commence_time).getTime();
+          return { fetchedAt: new Date(now).toISOString(), quota, live: start <= now, start, event: data };
+        } catch (e) {
+          // Game finished/removed, or no book offers this market: cache the empty answer too.
+          if (e.status === 404 || e.status === 422) return { fetchedAt: new Date(now).toISOString(), live: false, start: Infinity, event: null, empty: true };
+          throw e;
+        }
+      });
+    return sendJSON(res, 200, body, Math.floor((body.live ? PROPS_LIVE_TTL : PROPS_TTL) / 2000));
+  }
+
   return sendJSON(res, 404, { error: 'not_found' });
 }
+
+// Props create one cache entry per game+market; drop ones nobody has asked for in a while.
+setInterval(() => {
+  const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+  for (const [k, v] of cache) if (k.startsWith('props:') && v.at < cutoff && !v.inflight) cache.delete(k);
+}, 15 * 60 * 1000).unref();
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
 
