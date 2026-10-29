@@ -290,7 +290,6 @@
     demo: false,
     loading: false,
     fetchedAt: null,
-    quota: null,
     inactive: new Set(),
     counts: {},
   };
@@ -500,7 +499,6 @@
       state.demo = false;
       state.events = body.events || [];
       state.fetchedAt = body.fetchedAt ? new Date(body.fetchedAt) : new Date();
-      state.quota = body.quota;
       state.unsupported = false;
     } catch (e) {
       state.demo = true;
@@ -508,7 +506,6 @@
       state.events = d.events;
       state.unsupported = !!d.unsupported;
       state.fetchedAt = new Date();
-      state.quota = null;
     } finally {
       state.loading = false;
       els.refresh.classList.remove('spin');
@@ -604,7 +601,7 @@
     // Status
     els.status.classList.toggle('demo', state.demo);
     const t = state.fetchedAt ? state.fetchedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '';
-    els.statusText.textContent = state.demo ? `Demo data · ${t}` : `Live · updated ${t}${state.quota?.remaining ? ` · ${state.quota.remaining} credits left` : ''}`;
+    els.statusText.textContent = state.demo ? `Demo data · ${t}` : `Live · updated ${t}`;
     els.banner.hidden = !state.demo;
     els.banner.innerHTML = state.demo ? '<div>You\'re looking at <b>simulated odds</b>. Run the Edge server with an <code>ODDS_API_KEY</code> from the-odds-api.com to show real, live lines from every sportsbook.</div>' : '';
 
@@ -717,7 +714,6 @@
         const body = await res.json();
         if (!res.ok || body.error) throw new Error(body.error || `HTTP ${res.status}`);
         data = body.event;
-        if (body.quota?.remaining) state.quota = body.quota;
       }
     } catch (e) {
       error = 'Couldn\u2019t load props right now. Try again in a minute.';
