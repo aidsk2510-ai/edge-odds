@@ -388,7 +388,7 @@
         const wr = rng(`${home}:wx:${Math.floor(hour / 6)}`);
         let weather = null;
         if (['nba', 'ncaab', 'nhl', 'mma'].includes(sport.kind) || (sport.kind === 'nfl' && wr() < 0.3)) weather = { type: 'indoor' };
-        else if (sport.kind !== 'ncaaf' || wr() < 0.8) {
+        else {
           const codes = [0, 1, 2, 3, 3, 61, 63, 80, 71];
           weather = { type: wr() < 0.1 ? 'retractable' : 'outdoor', tempF: Math.round(28 + wr() * 45), windMph: Math.round(2 + wr() * 18), rainPct: 0, code: codes[Math.floor(wr() * codes.length)] };
           weather.rainPct = weather.code >= 51 ? Math.round(50 + wr() * 45) : Math.round(wr() * 20);
@@ -546,14 +546,16 @@
   }
   function weatherChip(w) {
     if (!w) return '';
-    if (w.type === 'indoor') return '<span class="wx"><span class="ic">🏟️</span>Indoors</span>';
+    const where = w.site ? `<span class="roof">· ${esc(w.site)}</span>` : '';
+    const note = w.approx ? ' (location estimated from team name)' : '';
+    if (w.type === 'indoor') return `<span class="wx"><span class="ic">🏟️</span>Indoors ${where}</span>`;
     const roof = w.type === 'retractable' ? '<span class="roof">· Retractable roof</span>' : '';
-    if (w.later || w.tempF == null) return `<span class="wx" title="Forecasts are available about 2 weeks ahead"><span class="ic">🗓️</span>Forecast closer to game day ${roof}</span>`;
+    if (w.later || w.tempF == null) return `<span class="wx" title="Forecasts are available about 2 weeks ahead${note}"><span class="ic">🗓️</span>Forecast closer to game day ${roof}${where}</span>`;
     const [ic, words] = wxLabel(w.code);
     // Flag weather that can affect a game: heavy wind, likely rain/snow, or extreme temps
     const bad = w.windMph >= 15 || w.rainPct >= 50 || w.code >= 71 || w.tempF <= 25 || w.tempF >= 95;
     const extra = [w.windMph != null ? `${w.windMph} mph wind` : '', w.rainPct ? `${w.rainPct}% precip` : ''].filter(Boolean).join(' · ');
-    return `<span class="wx ${bad ? 'bad' : ''}" title="${esc(words)}${extra ? ' · ' + esc(extra) : ''}"><span class="ic">${ic}</span><b>${w.tempF}°F</b>${esc(words)}${extra ? ' · ' + esc(extra) : ''} ${roof}</span>`;
+    return `<span class="wx ${bad ? 'bad' : ''}" title="${esc(words)}${extra ? ' · ' + esc(extra) : ''}${note}"><span class="ic">${ic}</span><b>${w.tempF}°F</b>${esc(words)}${extra ? ' · ' + esc(extra) : ''} ${roof}${where}</span>`;
   }
 
   const timeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
