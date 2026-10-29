@@ -311,6 +311,26 @@ function sendJSON(res, status, body, maxAge = 0) {
   }, JSON.stringify(body));
 }
 
+// Player props for one game and one stat, cached (shared by the props drawer and Ask Edge).
+function getProps(sport, event, market) {
+  return cached(`props:${event}:${market}`,
+    (b) => (b.live ? PROPS_LIVE_TTL : Math.max(PROPS_LIVE_TTL, Math.min(PROPS_TTL, b.start - Date.now()))),
+    async () => {
+      const now = Date.now();
+      try {
+        const { data, quota } = await upstream(`/v4/sports/${sport}/events/${event}/odds`, {
+          regions: REGIONS, markets: market, oddsFormat: 'decimal', dateFormat: 'iso',
+        });
+        const start = new Date(data.commence_time).getTime();
+        return { fetchedAt: new Date(now).toISOString(), quota, live: start <= now, start, event: data };
+      } catch (e) {
+        // Game finished/removed, or no book offers this market: cache the empty answer too.
+        if (e.status === 404 || e.status === 422) return { fetchedAt: new Date(now).toISOString(), live: false, start: Infinity, event: null, empty: true };
+        throw e;
+      }
+    });
+}
+
 // One sport + bet type from The Odds API, cached (shared by the odds board and Edge Picks).
 function getOdds(sport, market) {
   return cached(`odds:${sport}:${market}`, (b) => (b.live ? LIVE_TTL : Math.max(LIVE_TTL, Math.min(ODDS_TTL, (b.nextStart ?? Infinity) - Date.now()))), async () => {
@@ -372,12 +392,14 @@ async function writePicksNote(sport, r) {
   return { text, at: new Date().toISOString(), model: AI_MODEL };
 }
 
-// ---------- Ask Edge: real-time Q&A about the current board ----------
+// ---------- Ask Edge: universal Q&A across every sport ----------
+// Claude doesn't get the whole site up front (that would cost too many odds credits). Instead it calls tools
+// that look things up on demand: best bets, games (with weather + EPA), player props, and parlay pricing.
 const ASK_MODEL = process.env.ANTHROPIC_CHAT_MODEL || AI_MODEL;
 const ASK_LIMIT_PER_MIN = Number(process.env.ASK_PER_MINUTE) || 6;
 const ASK_LIMIT_PER_DAY = Number(process.env.ASK_PER_DAY) || 60;
-const ASK_HORIZON_DAYS = Number(process.env.ASK_HORIZON_DAYS) || 7; // how far ahead Ask Edge can see
-const ASK_MAX_BETS = 700; // keeps each question small and cheap even on a busy week
+const ASK_HORIZON_DAYS = Number(process.env.ASK_HORIZON_DAYS) || 7;
+const ASK_SCAN_MAX_AGE = (Number(process.env.ASK_SCAN_MINUTES) || 30) * 60e3; // reuse odds this old before paying for fresh ones
 const askHits = new Map(); // visitor ip -> timestamps of recent questions
 
 function askAllowed(req) {
@@ -398,118 +420,263 @@ async function readJson(req, limit = 20000) {
 }
 
 const etTime = (iso) => new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const pct1 = (x) => `${(x * 100).toFixed(1)}%`;
 
-// Everything the assistant is allowed to know, as compact text, plus a lookup table for the pricing tool.
-// Rebuilt at most once a minute per sport.
-function askContext(sport) {
-  return cached(`askctx:${sport}`, 60e3, async () => {
-    const boards = await Promise.all(PICK_MARKETS.map((m) => getOdds(sport, m).catch(() => null)));
+// Odds for Ask Edge: reuse anything cached in the last ASK_SCAN_MINUTES instead of paying for a refresh.
+function askOdds(sport, market) {
+  const hit = cache.get(`odds:${sport}:${market}`);
+  if (hit && 'body' in hit && Date.now() - hit.at < ASK_SCAN_MAX_AGE) return Promise.resolve(hit.body);
+  return getOdds(sport, market);
+}
+
+// Sports that currently have games (the /v4/sports list is free), falling back to all.
+async function activeSports() {
+  try {
+    const body = await cached('sports', SPORTS_TTL, async () => {
+      const { data } = await upstream('/v4/sports', {});
+      return { sports: data.filter((x) => MAJOR_SPORTS.has(x.key)).map((x) => ({ key: x.key, title: x.title, active: x.active })) };
+    });
+    const act = body.sports.filter((x) => x.active).map((x) => x.key);
+    return act.length ? act : [...MAJOR_SPORTS];
+  } catch { return [...MAJOR_SPORTS]; }
+}
+
+const SPORT_ALIASES = {
+  nfl: 'americanfootball_nfl', football: 'americanfootball_nfl', ncaaf: 'americanfootball_ncaaf', 'college football': 'americanfootball_ncaaf', cfb: 'americanfootball_ncaaf',
+  nba: 'basketball_nba', ncaab: 'basketball_ncaab', 'college basketball': 'basketball_ncaab', cbb: 'basketball_ncaab', wnba: 'basketball_wnba',
+  nhl: 'icehockey_nhl', hockey: 'icehockey_nhl', mlb: 'baseball_mlb', baseball: 'baseball_mlb',
+  epl: 'soccer_epl', 'premier league': 'soccer_epl', ucl: 'soccer_uefa_champs_league', 'champions league': 'soccer_uefa_champs_league',
+  mls: 'soccer_usa_mls', 'la liga': 'soccer_spain_la_liga', laliga: 'soccer_spain_la_liga', ufc: 'mma_mixed_martial_arts', mma: 'mma_mixed_martial_arts',
+};
+const toSport = (x) => { const k = String(x || '').toLowerCase().trim(); return MAJOR_SPORTS.has(k) ? k : SPORT_ALIASES[k] || null; };
+
+// One sport's bets (main line per game and bet type) with weather + EPA notes, cached 60s.
+function sportBoard(sport) {
+  return cached(`askboard:${sport}`, 60e3, async () => {
+    const markets = sport === 'mma_mixed_martial_arts' ? ['h2h', 'totals'] : PICK_MARKETS;
+    const boards = await Promise.all(markets.map((m) => askOdds(sport, m).catch(() => null)));
     const events = mergeBoards(boards);
-    const r = globalThis.EdgePicks.analyze(events, { markets: PICK_MARKETS, horizonHours: ASK_HORIZON_DAYS * 24, maxSingles: 6, maxParlays: 3 });
-    // Keep only each game's main line per bet type (the number most sportsbooks are offering), soonest games first.
-    const mainLine = new Map();
-    for (const x of r.sides) {
-      const k = `${x.eventId}|${x.market}`;
-      if (!mainLine.has(k) || x.books > mainLine.get(k).books) mainLine.set(k, { line: x.line, books: x.books });
-    }
-    let kept = r.sides.filter((x) => mainLine.get(`${x.eventId}|${x.market}`).line === x.line)
-      .sort((a, b) => new Date(a.start) - new Date(b.start));
-    let cutoff = null;
-    if (kept.length > ASK_MAX_BETS) { cutoff = kept[ASK_MAX_BETS].start; kept = kept.filter((x) => x.start < cutoff); }
-    r.sides = kept;
-    const titles = {};
-    for (const ev of events) for (const b of ev.bookmakers) titles[b.key] = b.title;
+    const fetchedAt = boards.filter(Boolean).map((b) => b.fetchedAt).sort()[0] || null;
+    const r = globalThis.EdgePicks.analyze(events, { markets, horizonHours: ASK_HORIZON_DAYS * 24, maxSingles: 0, maxParlays: 0 });
+    const main = new Map();
+    for (const x of r.sides) { const k = `${x.eventId}|${x.market}`; if (!main.has(k) || x.books > main.get(k).books) main.set(k, { line: x.line, books: x.books }); }
+    const sides = r.sides.filter((x) => main.get(`${x.eventId}|${x.market}`).line === x.line);
     const epa = await soon(epaFinder(sport), 800);
-    const byGame = new Map();
-    for (const x of r.sides) { if (!byGame.has(x.eventId)) byGame.set(x.eventId, []); byGame.get(x.eventId).push(x); }
-    const ids = {};
-    const lines = [];
-    let gi = 0, si = 0;
+    const games = new Map();
     for (const ev of events) {
-      const sides = byGame.get(ev.id);
-      if (!sides) continue;
-      gi++;
+      if (!sides.some((x) => x.eventId === ev.id)) continue;
       const w = await soon(weatherFor(sport, ev), 300);
-      const wx = !w ? '' : w.type === 'indoor' ? ' | Indoors' : w.tempF != null ? ` | Weather ${w.tempF}F, wind ${w.windMph} mph, ${w.rainPct || 0}% precip${w.type === 'retractable' ? ', retractable roof' : ''}` : '';
       const e = epa ? epa(ev) : null;
-      const ep = e && e.home && e.away ? ` | Team EPA/play (net, rank of ${e.of}): ${ev.away_team} ${e.away.net.toFixed(2)} #${e.away.netRank}, ${ev.home_team} ${e.home.net.toFixed(2)} #${e.home.netRank}` : '';
-      lines.push(`GAME ${ev.away_team} @ ${ev.home_team} | ${etTime(ev.commence_time)} ET${wx}${ep}`);
-      for (const x of sides.sort((a, b) => a.market.localeCompare(b.market))) {
-        const id = `S${++si}`; // each game's main line only
-        ids[id] = x;
-        lines.push(`  ${id} ${x.market === 'h2h' ? 'Moneyline' : x.market === 'spreads' ? 'Spread' : 'Total'}: ${x.pick} | best ${x.bestOdds} at ${x.best.title} | fair chance ${(x.fair * 100).toFixed(1)}% (fair price ${x.fairOdds}) | edge ${(x.edge * 100).toFixed(1)}% | ${x.books} books`);
-      }
+      games.set(ev.id, {
+        sport, eventId: ev.id, home: ev.home_team, away: ev.away_team, start: ev.commence_time, game: `${ev.away_team} @ ${ev.home_team}`,
+        weather: !w ? null : w.type === 'indoor' ? `Indoors${w.site ? ` (${w.site})` : ''}` : w.tempF != null ? `${w.tempF}F, ${w.windMph} mph wind, ${w.rainPct || 0}% chance of precipitation${w.type === 'retractable' ? ', retractable roof' : ''}${w.site ? `, at ${w.site}` : ''}` : 'Forecast not out yet',
+        epa: e && e.home && e.away ? `EPA per play (net, rank of ${e.of}): ${ev.away_team} ${e.away.net.toFixed(2)} (#${e.away.netRank}), ${ev.home_team} ${e.home.net.toFixed(2)} (#${e.home.netRank})` : null,
+      });
     }
-    const soonest = globalThis.EdgePicks.analyze(events, { markets: PICK_MARKETS, maxSingles: 6, maxParlays: 3 });
-    const idOf = (x) => Object.keys(ids).find((k) => { const y = ids[k]; return y.eventId === x.eventId && y.market === x.market && y.pick === x.pick; }) || '';
-    r.singles = soonest.singles; r.parlays = soonest.parlays;
-    const top = r.singles.filter((x) => idOf(x)).map((x) => `${idOf(x)} ${x.pick} ${x.bestOdds} at ${x.best.title} (edge ${(x.edge * 100).toFixed(1)}%)`).join('; ');
-    const tp = r.parlays.map((p) => `${p.legs.map((l) => l.pick).join(' + ')} at ${p.title} ${p.odds}, hits ${(p.hit * 100).toFixed(1)}%, edge ${(p.ev * 100).toFixed(1)}%`).join('; ');
-    const through = cutoff ? `games starting before ${etTime(cutoff)} ET` : `the next ${ASK_HORIZON_DAYS} days`;
-    const text = `${lines.join('\n')}\n\nSITE'S TOP SINGLES (next 36 hours): ${top || 'none'}\nSITE'S TOP PARLAYS (next 36 hours): ${tp || 'none'}`;
-    return { text, ids, titles, games: gi, through, at: new Date().toISOString() };
+    const titles = {};
+    for (const ev of events) for (const bk of ev.bookmakers) titles[bk.key] = bk.title;
+    return { sport, sides, games, events, fetchedAt, titles };
   });
 }
 
-const ASK_TOOLS = [{
-  name: 'price_bet',
-  description: 'Price one bet or a parlay using bet IDs from the data (like S3, S7). Returns which licensed sportsbook pays the most for ALL the legs together, the American odds, what the stake returns, the chance every leg wins, and the edge. Always use this for parlay or payout math instead of calculating yourself.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      legs: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8, description: 'Bet IDs, e.g. ["S3","S7"]' },
-      stake: { type: 'number', description: 'Dollars bet. Default 10.' },
-    },
-    required: ['legs'],
-  },
-}];
+// Per-question registry: short IDs (G1, B1, P1) that Claude passes back to the tools.
+function newRegistry() {
+  const r = { games: new Map(), bets: new Map(), gameIds: new Map(), betIds: new Map(), titles: {}, n: { G: 0, B: 0, P: 0 } };
+  r.game = (g) => { const k = `${g.sport}|${g.eventId}`; if (!r.gameIds.has(k)) { const id = `G${++r.n.G}`; r.gameIds.set(k, id); r.games.set(id, g); } return r.gameIds.get(k); };
+  r.bet = (b, prefix = 'B') => { const k = `${b.eventId}|${b.market}|${b.pick}`; if (!r.betIds.has(k)) { const id = `${prefix}${++r.n[prefix]}`; r.betIds.set(k, id); r.bets.set(id, b); } return r.betIds.get(k); };
+  return r;
+}
+const betView = (reg, x, g) => ({
+  id: reg.bet(x), game_id: reg.game(g), sport: SPORT_NAMES[g.sport] || g.sport, game: g.game, starts: `${etTime(g.start)} ET`,
+  bet: x.pick, type: x.market === 'h2h' ? 'moneyline' : x.market === 'spreads' ? 'spread' : 'total',
+  best_price: x.bestOdds, sportsbook: x.best.title, fair_chance: pct1(x.fair), fair_price: x.fairOdds, edge: pct1(x.edge), books: x.books,
+});
 
-function priceBet(ctx, input) {
-  const stake = Number(input.stake) > 0 ? Number(input.stake) : 10;
-  const legs = (input.legs || []).map((id) => ({ id, side: ctx.ids[String(id).toUpperCase()] }));
-  const missing = legs.filter((l) => !l.side).map((l) => l.id);
-  if (missing.length) return { error: `Unknown bet IDs: ${missing.join(', ')}. Use IDs from the data.` };
-  const games = new Set(legs.map((l) => l.side.eventId));
-  const warning = games.size < legs.length ? 'Two or more legs are from the same game. Many sportsbooks will not allow that, or they price it differently (same-game parlay), so these numbers are only a rough guide.' : null;
-  const books = Object.keys(legs[0].side.offers).filter((b) => legs.every((l) => l.side.offers[b]));
-  if (!books.length) return { error: 'No single licensed sportsbook offers every one of these legs at the same line, so this parlay cannot be placed as one bet.' };
-  const options = books.map((b) => {
-    const dec = legs.reduce((p, l) => p * l.side.offers[b], 1);
-    return { sportsbook: ctx.titles[b] || b, odds: globalThis.EdgePicks.fmtAmerican(dec), returns: +(stake * dec).toFixed(2), dec };
-  }).sort((a, b) => b.dec - a.dec);
-  const hit = legs.reduce((p, l) => p * l.side.fair, 1);
-  const best = options[0];
+async function toolFindBestBets(reg, input) {
+  const wanted = (Array.isArray(input.sports) && input.sports.length ? input.sports.map(toSport).filter(Boolean) : await activeSports());
+  const days = Math.min(ASK_HORIZON_DAYS, Math.max(1, Number(input.days) || 2));
+  const market = ['h2h', 'spreads', 'totals'].includes(input.market) ? input.market : null;
+  const limit = Math.min(15, Math.max(1, Number(input.limit) || 8));
+  const boards = (await Promise.all(wanted.map((sp) => sportBoard(sp).catch(() => null)))).filter(Boolean);
+  for (const b of boards) Object.assign(reg.titles, b.titles);
+  const until = Date.now() + days * 864e5;
+  const pool = [];
+  for (const b of boards) for (const x of b.sides) {
+    if (market && x.market !== market) continue;
+    if (new Date(x.start).getTime() > until) continue;
+    pool.push({ x, g: b.games.get(x.eventId), board: b });
+  }
+  pool.sort((a, b) => b.x.edge - a.x.edge);
+  // Parlays across all chosen sports: one leg per game, all at one sportsbook
+  const events = boards.flatMap((b) => b.events.filter((ev) => new Date(ev.commence_time).getTime() <= until).map((ev) => ({ ...ev, _sport: b.sport })));
+  const pr = globalThis.EdgePicks.analyze(events, { markets: market ? [market] : PICK_MARKETS, horizonHours: days * 24, maxSingles: 0, maxParlays: 4 });
+  const findSide = (leg) => pool.find((p) => p.x.pick === leg.pick && p.x.game === leg.game);
   return {
-    legs: legs.map((l) => `${l.side.pick} (${l.side.game})`),
-    stake, best_sportsbook: best.sportsbook, odds: best.odds, total_return: best.returns, profit_if_it_wins: +(best.returns - stake).toFixed(2),
-    chance_all_legs_win: `${(hit * 100).toFixed(1)}% (about 1 in ${Math.max(1, Math.round(1 / hit))})`,
-    edge: `${((hit * best.dec - 1) * 100).toFixed(1)}%`,
-    other_sportsbooks: options.slice(1, 4).map(({ dec, ...o }) => o),
-    ...(warning ? { warning } : {}),
+    sports_checked: boards.map((b) => SPORT_NAMES[b.sport] || b.sport),
+    prices_as_of: boards.map((b) => b.fetchedAt).filter(Boolean).sort()[0] ? `${etTime(boards.map((b) => b.fetchedAt).filter(Boolean).sort()[0])} ET or later` : null,
+    best_bets: pool.slice(0, limit).map(({ x, g }) => ({ ...betView(reg, x, g), weather: g.weather, epa: g.epa })),
+    best_parlays: pr.parlays.map((p) => ({
+      legs: p.legs.map((l) => { const f = findSide(l); return f ? `${reg.bet(f.x)}: ${l.pick} ${l.odds} (${l.game})` : `${l.pick} ${l.odds} (${l.game})`; }),
+      sportsbook: p.title, odds: p.odds, ten_dollars_returns: `$${(10 * p.dec).toFixed(2)}`, chance_all_win: pct1(p.hit), edge: pct1(p.ev),
+    })),
   };
 }
 
-function askSystem(sport, ctx) {
-  const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-  return `You are Edge, the betting assistant on the Edge odds comparison website. Today is ${today}. The user is looking at ${SPORT_NAMES[sport] || sport}.
+async function toolListGames(reg, input) {
+  const sport = toSport(input.sport);
+  if (!sport) return { error: `Unknown sport "${input.sport}". Options: ${[...MAJOR_SPORTS].map((k) => SPORT_NAMES[k]).join(', ')}.` };
+  const days = Math.min(ASK_HORIZON_DAYS, Math.max(1, Number(input.days) || 3));
+  const team = String(input.team || '').toLowerCase().trim();
+  const b = await sportBoard(sport);
+  Object.assign(reg.titles, b.titles);
+  const until = Date.now() + days * 864e5;
+  const games = [...b.games.values()]
+    .filter((g) => new Date(g.start).getTime() <= until && (!team || g.game.toLowerCase().includes(team)))
+    .sort((a, c) => new Date(a.start) - new Date(c.start)).slice(0, 25);
+  return {
+    sport: SPORT_NAMES[sport], prices_as_of: b.fetchedAt ? `${etTime(b.fetchedAt)} ET` : null, games_found: games.length,
+    player_props_available: (PROP_MARKETS[sport] || []).length > 0,
+    games: games.map((g) => ({
+      game_id: reg.game(g), game: g.game, starts: `${etTime(g.start)} ET`, weather: g.weather, epa: g.epa,
+      bets: b.sides.filter((x) => x.eventId === g.eventId).map((x) => { const v = betView(reg, x, g); return { id: v.id, bet: v.bet, type: v.type, best_price: v.best_price, sportsbook: v.sportsbook, fair_chance: v.fair_chance, fair_price: v.fair_price, edge: v.edge }; }),
+    })),
+  };
+}
 
-You answer using ONLY the data below, which the site calculated from live sportsbook prices at ${etTime(ctx.at)} ET.
-- "fair chance" = all sportsbooks' prices combined, with each book's built-in cut removed. It is the market's estimate, not a separate prediction.
-- "best" = the best price at a licensed US sportsbook. "fair price" = the odds matching the fair chance exactly.
+const PROP_LABELS = {
+  player_pass_yds: 'passing yards', player_rush_yds: 'rushing yards', player_reception_yds: 'receiving yards', player_receptions: 'receptions', player_pass_tds: 'passing TDs', player_anytime_td: 'anytime TD',
+  player_points: 'points', player_rebounds: 'rebounds', player_assists: 'assists', player_threes: 'threes', player_points_rebounds_assists: 'points + rebounds + assists',
+  player_shots_on_goal: 'shots on goal', player_goal_scorer_anytime: 'anytime goal', batter_hits: 'hits', batter_home_runs: 'home runs', batter_total_bases: 'total bases', pitcher_strikeouts: 'strikeouts', player_shots_on_target: 'shots on target',
+};
+
+async function toolPlayerProps(reg, input) {
+  const g = reg.games.get(String(input.game_id || '').toUpperCase());
+  if (!g) return { error: 'Unknown game_id. Call list_games or find_best_bets first and use a game_id from the results.' };
+  const markets = PROP_MARKETS[g.sport] || [];
+  const stat = String(input.stat || '').trim();
+  const market = markets.find((m) => m === stat) || markets.find((m) => (PROP_LABELS[m] || '').toLowerCase() === stat.toLowerCase());
+  if (!market) return { error: `Pick a stat for ${SPORT_NAMES[g.sport]}: ${markets.map((m) => `${m} (${PROP_LABELS[m]})`).join(', ') || 'none available'}.` };
+  const body = await getProps(g.sport, g.eventId, market);
+  const ev = body.event;
+  if (!ev || !ev.bookmakers?.length) return { game: g.game, stat: PROP_LABELS[market], players: [], note: 'No sportsbook has posted these props yet. They usually appear closer to game time.' };
+  const licensed = new Set(globalThis.EdgePicks.LICENSED);
+  // Group each player's line: Over/Under at the same number across books
+  const groups = new Map();
+  for (const b of ev.bookmakers) {
+    reg.titles[b.key] = b.title;
+    const m = b.markets.find((x) => x.key === market);
+    for (const o of m?.outcomes || []) {
+      const player = o.description || o.name;
+      const key = `${player}|${o.point ?? ''}`;
+      if (!groups.has(key)) groups.set(key, { player, point: o.point ?? null, books: new Map() });
+      const gb = groups.get(key).books;
+      if (!gb.has(b.key)) gb.set(b.key, {});
+      gb.get(b.key)[o.description ? o.name : 'Yes'] = o.price;
+    }
+  }
+  const out = [];
+  for (const grp of groups.values()) {
+    const two = [...grp.books.entries()].filter(([, v]) => v.Over && v.Under);
+    const sidesHere = grp.point != null && two.length ? ['Over', 'Under'] : ['Yes'];
+    for (const side of sidesHere) {
+      const offers = Object.fromEntries([...grp.books.entries()].filter(([k, v]) => licensed.has(k) && v[side]).map(([k, v]) => [k, v[side]]));
+      const bestKey = Object.keys(offers).sort((a, c) => offers[c] - offers[a])[0];
+      if (!bestKey) continue;
+      let fair = null;
+      if (side !== 'Yes' && two.length >= 2) {
+        fair = two.reduce((sum, [, v]) => { const a = 1 / v[side], b2 = 1 / v[side === 'Over' ? 'Under' : 'Over']; return sum + a / (a + b2); }, 0) / two.length;
+      }
+      const pick = side === 'Yes' ? `${grp.player} ${PROP_LABELS[market]}` : `${grp.player} ${side} ${grp.point} ${PROP_LABELS[market]}`;
+      const bet = { eventId: g.eventId, market, pick, game: g.game, start: g.start, fair, offers, best: { book: bestKey, title: reg.titles[bestKey] || bestKey, price: offers[bestKey] } };
+      out.push({
+        id: reg.bet(bet, 'P'), bet: pick, best_price: globalThis.EdgePicks.fmtAmerican(offers[bestKey]), sportsbook: bet.best.title,
+        fair_chance: fair != null ? pct1(fair) : 'unknown (only one side offered)', edge: fair != null ? pct1(fair * offers[bestKey] - 1) : 'unknown', books: grp.books.size,
+      });
+    }
+  }
+  out.sort((a, c) => c.books - a.books || a.bet.localeCompare(c.bet));
+  return { game: g.game, stat: PROP_LABELS[market], prices_as_of: `${etTime(body.fetchedAt)} ET`, players: out.slice(0, 40) };
+}
+
+function toolPriceBet(reg, input) {
+  const stake = Number(input.stake) > 0 ? Number(input.stake) : 10;
+  const legs = (input.legs || []).map((id) => ({ id, bet: reg.bets.get(String(id).toUpperCase()) }));
+  const missing = legs.filter((l) => !l.bet).map((l) => l.id);
+  if (!legs.length) return { error: 'Give at least one bet id.' };
+  if (missing.length) return { error: `Unknown bet ids: ${missing.join(', ')}. Use ids returned by the other tools in this conversation turn.` };
+  const sameGame = new Set(legs.map((l) => l.bet.eventId)).size < legs.length;
+  const books = Object.keys(legs[0].bet.offers).filter((b) => legs.every((l) => l.bet.offers[b]));
+  if (!books.length) return { error: 'No single licensed sportsbook offers every one of these legs, so they cannot be combined into one parlay. Try swapping a leg.' };
+  const title = (k) => reg.titles[k] || legs.map((l) => (l.bet.best.book === k ? l.bet.best.title : null)).find(Boolean) || k;
+  const options = books.map((k) => { const dec = legs.reduce((p, l) => p * l.bet.offers[k], 1); return { sportsbook: title(k), odds: globalThis.EdgePicks.fmtAmerican(dec), total_return: +(stake * dec).toFixed(2), dec }; }).sort((a, b) => b.dec - a.dec);
+  const known = legs.every((l) => l.bet.fair != null);
+  const hit = known ? legs.reduce((p, l) => p * l.bet.fair, 1) : null;
+  const best = options[0];
+  return {
+    legs: legs.map((l) => `${l.bet.pick} (${l.bet.game})`), stake,
+    best_sportsbook: best.sportsbook, odds: best.odds, total_return: best.total_return, profit_if_it_wins: +(best.total_return - stake).toFixed(2),
+    chance_all_win: hit != null ? `${pct1(hit)} (about 1 in ${Math.max(1, Math.round(1 / hit))})` : 'unknown for at least one leg',
+    edge: hit != null ? pct1(hit * best.dec - 1) : 'unknown',
+    other_sportsbooks: options.slice(1, 4).map(({ dec, ...o }) => o),
+    ...(sameGame ? { warning: 'Some legs are from the same game. Sportsbooks price those as a same-game parlay, usually lower than shown here, so treat these numbers as a rough guide.' } : {}),
+  };
+}
+
+const ASK_TOOLS = [
+  { name: 'find_best_bets', description: 'Scan one, several, or all sports for the best-priced bets (biggest edge) and the best parlays (one leg per game, all at one sportsbook). Results include weather and team EPA for each game. Use this for "best bets", "what should I bet", "build me a parlay" across sports.',
+    input_schema: { type: 'object', properties: {
+      sports: { type: 'array', items: { type: 'string' }, description: 'Sports to include, e.g. ["NFL","NBA"]. Leave empty for every sport in season.' },
+      days: { type: 'number', description: 'How many days ahead to look (1-7). Default 2.' },
+      market: { type: 'string', enum: ['h2h', 'spreads', 'totals'], description: 'Only one bet type (h2h = moneyline). Leave out for all.' },
+      limit: { type: 'number', description: 'How many single bets to return (max 15). Default 8.' } } } },
+  { name: 'list_games', description: 'List upcoming games for one sport with every main-line bet (moneyline, spread, total) and its best price, fair chance and edge, plus weather and team EPA. Use to look up a specific team or game.',
+    input_schema: { type: 'object', properties: {
+      sport: { type: 'string', description: 'e.g. "NFL", "college football", "NBA", "NHL", "Premier League", "UFC".' },
+      days: { type: 'number', description: 'Days ahead (1-7). Default 3.' },
+      team: { type: 'string', description: 'Optional team name to filter, e.g. "Chiefs".' } }, required: ['sport'] } },
+  { name: 'get_player_props', description: 'Get player prop lines for one game and one stat (e.g. points, passing yards), with the best price, sportsbook, fair chance and edge for each player. Needs a game_id from list_games or find_best_bets.',
+    input_schema: { type: 'object', properties: {
+      game_id: { type: 'string', description: 'e.g. "G3"' },
+      stat: { type: 'string', description: 'Stat key or name, e.g. "player_points" or "points", "passing yards", "anytime TD".' } }, required: ['game_id', 'stat'] } },
+  { name: 'price_bet', description: 'Price one bet or a parlay from bet ids returned by the other tools (B… for game bets, P… for player props), across any sports. Returns the licensed sportsbook that pays most for ALL legs together, the odds, what the stake returns, the chance all legs win and the edge. Always use this for payout or parlay math.',
+    input_schema: { type: 'object', properties: {
+      legs: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 10, description: 'Bet ids, e.g. ["B2","B7","P4"]' },
+      stake: { type: 'number', description: 'Dollars bet. Default 10.' } }, required: ['legs'] } },
+];
+
+async function runTool(reg, name, input) {
+  try {
+    if (name === 'find_best_bets') return await toolFindBestBets(reg, input);
+    if (name === 'list_games') return await toolListGames(reg, input);
+    if (name === 'get_player_props') return await toolPlayerProps(reg, input);
+    if (name === 'price_bet') return toolPriceBet(reg, input);
+    return { error: 'Unknown tool' };
+  } catch (e) {
+    console.warn(`[ask] tool ${name} failed: ${e.message}`);
+    return { error: 'That lookup failed. Try again or ask a different way.' };
+  }
+}
+
+async function askSystem(viewing) {
+  const today = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const active = (await activeSports()).map((k) => SPORT_NAMES[k] || k).join(', ');
+  return `You are Edge, the betting assistant on the Edge odds comparison website. It is ${today} ET.
+Sports in season on the site: ${active}.${viewing ? ` The user is currently looking at ${SPORT_NAMES[viewing] || viewing}, which is a hint, not a limit.` : ''}
+
+You can see everything on the site through tools: odds for every sport (moneyline, spread, total), each bet's best price at licensed US sportsbooks, fair chance, fair price and edge, plus weather, team EPA (NFL and college football), and player props. Look things up with the tools. Never guess a price, team, line or number.
+- "fair chance" = all sportsbooks' prices combined with each book's built-in cut removed. It is the market's estimate, not a separate prediction.
 - "edge" = how the best price compares with the fair chance. Positive is a bargain; negative is what the sportsbook keeps on average.
+- A parlay must be placed at one sportsbook. Legs can come from different sports. Use price_bet for every parlay or payout calculation; never do that math yourself.
+- Weather and EPA are useful context: strong wind, rain or snow can lower scoring and passing; a much higher EPA usually means the stronger team. Mention them when relevant, but do not invent precise effects. The price-based edge is the main measure of value.
 
 How to answer:
-- Be short and plain, so a 5th grader could follow: usually 2 to 6 sentences or a short dash list. Plain text, no markdown headers, tables, or bold.
-- Copy prices and sportsbook names exactly. For any parlay or payout question, call the price_bet tool with bet IDs. Never do parlay math yourself. Do not show bet IDs (like S3) to the user.
-- "Best bet" means the best price compared with the fair chance, not a sure winner. Say the chance of winning when you recommend something. Never promise a win or call anything a lock or guaranteed.
-- You only see odds plus the weather and team EPA shown here. You do not know injuries, lineups, news, player stats, records, or trends. If asked, say so and suggest checking the latest news.
-- Only the games listed are available (${ctx.through}; live games are not included). Games further out may not have prices yet. If asked about anything else, say it is not on the board right now.
-- A parlay must be placed at one sportsbook. Legs from the same game are usually not allowed as a normal parlay.
-- If someone mentions chasing losses, betting money they need, or feeling out of control, be kind, suggest taking a break, and share the 1-800-GAMBLER helpline.
-- Stay on sports betting and this site. Politely decline unrelated requests.
-
-DATA (${ctx.games} games):
-${ctx.text}`;
+- Be short and plain, so a 5th grader could follow: usually 2 to 6 sentences or a short dash list. Plain text, no markdown headers, tables or bold. Never show internal ids (like B3, G2, P5).
+- Copy prices, lines and sportsbook names exactly from tool results. Give the chance of winning when you recommend something.
+- "Best bet" means best price compared with the fair chance, not a sure winner. Never promise a win or call anything a lock or guaranteed.
+- You do not know injuries, lineups, news, player stats, records or trends beyond what the tools return. If asked, say so and suggest checking the latest news.
+- Live games are not included. Games far ahead may not have prices yet.
+- If someone mentions chasing losses, betting money they need, or feeling out of control, be kind, suggest a break, and share the 1-800-GAMBLER helpline.
+- Stay on sports betting and this site. Politely decline unrelated requests.`;
 }
 
 async function claude(body) {
@@ -522,32 +689,30 @@ async function claude(body) {
   return res.json();
 }
 
-async function answerQuestion(sport, history, question) {
-  const ctx = await askContext(sport);
-  const system = askSystem(sport, ctx);
+async function answerQuestion(viewing, history, question) {
+  const reg = newRegistry();
+  const system = await askSystem(viewing);
   const messages = [...history, { role: 'user', content: question }];
-  let usageIn = 0, usageOut = 0;
-  for (let step = 0; step < 4; step++) {
+  let usageIn = 0, usageOut = 0, tools = 0;
+  for (let step = 0; step < 7; step++) {
     const out = await claude({ model: ASK_MODEL, max_tokens: 1500, system, tools: ASK_TOOLS, messages });
     usageIn += out.usage?.input_tokens || 0; usageOut += out.usage?.output_tokens || 0;
     if (out.stop_reason === 'tool_use') {
       messages.push({ role: 'assistant', content: out.content });
-      messages.push({
-        role: 'user',
-        content: out.content.filter((b) => b.type === 'tool_use').map((b) => ({
-          type: 'tool_result', tool_use_id: b.id,
-          content: JSON.stringify(b.name === 'price_bet' ? priceBet(ctx, b.input || {}) : { error: 'Unknown tool' }),
-        })),
-      });
+      const results = [];
+      for (const b of out.content.filter((x) => x.type === 'tool_use')) {
+        tools++;
+        results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(await runTool(reg, b.name, b.input || {})) });
+      }
+      messages.push({ role: 'user', content: results });
       continue;
     }
     const text = (out.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-    console.log(`[ask] ${sport}: ${usageIn} in / ${usageOut} out tokens, ${step} tool call${step === 1 ? '' : 's'}`);
-    return { text: text || 'Sorry, I could not come up with an answer. Try asking another way.', at: ctx.at };
+    console.log(`[ask] ${usageIn} in / ${usageOut} out tokens, ${tools} tool call${tools === 1 ? '' : 's'}`);
+    return { text: text || 'Sorry, I could not come up with an answer. Try asking another way.' };
   }
-  return { text: 'That took too many steps. Try a simpler question.', at: ctx.at };
+  return { text: 'That took too many steps. Try a simpler question.' };
 }
-
 
 // Merge the moneyline, spread and total boards into one list of games.
 function mergeBoards(boards) {
@@ -605,9 +770,9 @@ async function handleApi(req, res, url) {
     if (!allowed.ok) return sendJSON(res, 429, { error: allowed.why === 'day' ? 'daily_limit' : 'slow_down' });
     let body;
     try { body = await readJson(req); } catch (e) { return sendJSON(res, e.status || 400, { error: 'bad_request' }); }
-    const sport = body.sport;
+    const viewing = MAJOR_SPORTS.has(body.viewing) ? body.viewing : MAJOR_SPORTS.has(body.sport) ? body.sport : null;
     const question = String(body.question || '').trim().slice(0, 600);
-    if (!MAJOR_SPORTS.has(sport) || !question) return sendJSON(res, 400, { error: 'bad_request' });
+    if (!question) return sendJSON(res, 400, { error: 'bad_request' });
     // Keep the last few turns; they must alternate user/assistant and start with the user.
     const history = [];
     for (const h of (Array.isArray(body.history) ? body.history : []).slice(-8)) {
@@ -619,7 +784,7 @@ async function handleApi(req, res, url) {
     }
     if (history.length && history[history.length - 1].role === 'user') history.pop();
     try {
-      return sendJSON(res, 200, await answerQuestion(sport, history, question));
+      return sendJSON(res, 200, await answerQuestion(viewing, history, question));
     } catch (e) {
       console.warn(`[ask] failed: ${e.message}`);
       return sendJSON(res, 502, { error: 'ai_failed' });
@@ -652,22 +817,7 @@ async function handleApi(req, res, url) {
     if (!PROP_MARKETS[sport]?.includes(market)) return sendJSON(res, 400, { error: 'unknown_market' });
     if (!/^[a-zA-Z0-9]{8,64}$/.test(event)) return sendJSON(res, 400, { error: 'bad_event' });
 
-    const body = await cached(`props:${event}:${market}`,
-      (b) => (b.live ? PROPS_LIVE_TTL : Math.max(PROPS_LIVE_TTL, Math.min(PROPS_TTL, b.start - Date.now()))),
-      async () => {
-        const now = Date.now();
-        try {
-          const { data, quota } = await upstream(`/v4/sports/${sport}/events/${event}/odds`, {
-            regions: REGIONS, markets: market, oddsFormat: 'decimal', dateFormat: 'iso',
-          });
-          const start = new Date(data.commence_time).getTime();
-          return { fetchedAt: new Date(now).toISOString(), quota, live: start <= now, start, event: data };
-        } catch (e) {
-          // Game finished/removed, or no book offers this market: cache the empty answer too.
-          if (e.status === 404 || e.status === 422) return { fetchedAt: new Date(now).toISOString(), live: false, start: Infinity, event: null, empty: true };
-          throw e;
-        }
-      });
+    const body = await getProps(sport, event, market);
     const { quota, ...pub } = body;
     const entry = cache.get(`props:${event}:${market}`);
     const refreshing = Boolean(entry?.inflight) || (entry && Date.now() - entry.at >= entry.ttl);
@@ -680,7 +830,7 @@ async function handleApi(req, res, url) {
 // Props create one cache entry per game+market; drop ones nobody has asked for in a while.
 setInterval(() => {
   const cutoff = Date.now() - 2 * 60 * 60 * 1000;
-  for (const [k, v] of cache) if (/^(props|wx|espn|ai|askctx):/.test(k) && v.at < cutoff && !v.inflight) cache.delete(k);
+  for (const [k, v] of cache) if (/^(props|wx|espn|ai|askboard):/.test(k) && v.at < cutoff && !v.inflight) cache.delete(k);
 }, 15 * 60 * 1000).unref();
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
