@@ -11,8 +11,8 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { INDOOR_SPORTS, venueFor, placeGuesses, normalize as teamKey } from './venues.js';
 // Optional features load separately, so a missing file switches that feature off instead of crashing the site.
-let loadNflEpa = null, loadCfbEpa = null, indexTeams = null;
-try { ({ loadNflEpa, loadCfbEpa, indexTeams } = await import('./stats.js')); }
+let loadNflEpa = null, loadCfbEpa = null, loadNbaRatings = null, indexTeams = null;
+try { ({ loadNflEpa, loadCfbEpa, loadNbaRatings, indexTeams } = await import('./stats.js')); }
 catch (e) { console.error(`[startup] Team EPA is off: couldn't load stats.js (${e.message}). Upload stats.js to the main folder.`); }
 try { await import('./public/picks-engine.js'); } // defines globalThis.EdgePicks (also used by the page)
 catch (e) { console.error(`[startup] Edge Picks is off: couldn't load public/picks-engine.js (${e.message}). Upload it into the public folder.`); }
@@ -273,7 +273,7 @@ async function weatherFor(sport, ev) {
 
 // Team EPA/play for football boards, refreshed every 6 hours (nflverse updates daily; CFBD a few times a week).
 const EPA_TTL = 6 * 60 * 60 * 1000;
-const EPA_LOADERS = loadNflEpa ? { americanfootball_nfl: loadNflEpa, americanfootball_ncaaf: loadCfbEpa } : {};
+const EPA_LOADERS = loadNflEpa ? { americanfootball_nfl: loadNflEpa, americanfootball_ncaaf: loadCfbEpa, basketball_nba: loadNbaRatings } : {};
 async function epaFinder(sport) {
   if (!EPA_LOADERS[sport]) return null;
   try {
@@ -286,7 +286,7 @@ async function epaFinder(sport) {
       const t = find(name);
       return t && { net: t.net, off: t.off, def: t.def, netRank: t.netRank, offRank: t.offRank, defRank: t.defRank };
     };
-    return (ev) => ({ home: pick(ev.home_team), away: pick(ev.away_team), of: stats.count, through: stats.through, season: stats.season });
+    return (ev) => ({ kind: stats.kind || 'epa', home: pick(ev.home_team), away: pick(ev.away_team), of: stats.count, through: stats.through, season: stats.season });
   } catch (e) {
     console.warn(`[epa] ${sport}: ${e.message}`);
     return null;
@@ -470,7 +470,9 @@ function sportBoard(sport) {
       games.set(ev.id, {
         sport, eventId: ev.id, home: ev.home_team, away: ev.away_team, start: ev.commence_time, game: `${ev.away_team} @ ${ev.home_team}`,
         weather: !w ? null : w.type === 'indoor' ? `Indoors${w.site ? ` (${w.site})` : ''}` : w.tempF != null ? `${w.tempF}F, ${w.windMph} mph wind, ${w.rainPct || 0}% chance of precipitation${w.type === 'retractable' ? ', retractable roof' : ''}${w.site ? `, at ${w.site}` : ''}` : 'Forecast not out yet',
-        epa: e && e.home && e.away ? `EPA per play (net, rank of ${e.of}): ${ev.away_team} ${e.away.net.toFixed(2)} (#${e.away.netRank}), ${ev.home_team} ${e.home.net.toFixed(2)} (#${e.home.netRank})` : null,
+        epa: e && e.home && e.away ? (e.kind === 'rating'
+          ? `Team ratings, points per 100 possessions (${e.through || 'season'}; rank of ${e.of}; defense: lower is better): ${[[ev.away_team, e.away], [ev.home_team, e.home]].map(([n, t]) => `${n} offense ${t.off.toFixed(1)} #${t.offRank}, defense ${t.def.toFixed(1)} #${t.defRank}, net ${t.net >= 0 ? '+' : ''}${t.net.toFixed(1)} #${t.netRank}`).join('; ')}`
+          : `EPA per play (${e.through || 'season'}; rank of ${e.of}; defense: lower is better): ${[[ev.away_team, e.away], [ev.home_team, e.home]].map(([n, t]) => `${n} offense ${t.off.toFixed(2)} #${t.offRank}, defense ${t.def.toFixed(2)} #${t.defRank}, net ${t.net.toFixed(2)} #${t.netRank}`).join('; ')}`) : null,
       });
     }
     const titles = {};
@@ -623,13 +625,13 @@ function toolPriceBet(reg, input) {
 }
 
 const ASK_TOOLS = [
-  { name: 'find_best_bets', description: 'Scan one, several, or all sports for the best-priced bets (biggest edge) and the best parlays (one leg per game, all at one sportsbook). Results include weather and team EPA for each game. Use this for "best bets", "what should I bet", "build me a parlay" across sports.',
+  { name: 'find_best_bets', description: 'Scan one, several, or all sports for the best-priced bets (biggest edge) and the best parlays (one leg per game, all at one sportsbook). Results include weather and team stats (football EPA, NBA ratings) for each game. Use this for "best bets", "what should I bet", "build me a parlay" across sports.',
     input_schema: { type: 'object', properties: {
       sports: { type: 'array', items: { type: 'string' }, description: 'Sports to include, e.g. ["NFL","NBA"]. Leave empty for every sport in season.' },
       days: { type: 'number', description: 'How many days ahead to look (1-7). Default 2.' },
       market: { type: 'string', enum: ['h2h', 'spreads', 'totals'], description: 'Only one bet type (h2h = moneyline). Leave out for all.' },
       limit: { type: 'number', description: 'How many single bets to return (max 15). Default 8.' } } } },
-  { name: 'list_games', description: 'List upcoming games for one sport with every main-line bet (moneyline, spread, total) and its best price, fair chance and edge, plus weather and team EPA. Use to look up a specific team or game.',
+  { name: 'list_games', description: 'List upcoming games for one sport with every main-line bet (moneyline, spread, total) and its best price, fair chance and edge, plus weather and team stats (football EPA, NBA offensive/defensive/net rating). Use to look up a specific team or game.',
     input_schema: { type: 'object', properties: {
       sport: { type: 'string', description: 'e.g. "NFL", "college football", "NBA", "NHL", "Premier League", "UFC".' },
       days: { type: 'number', description: 'Days ahead (1-7). Default 3.' },
@@ -663,11 +665,11 @@ async function askSystem(viewing) {
   return `You are Edge, the betting assistant on the Edge odds comparison website. It is ${today} ET.
 Sports in season on the site: ${active}.${viewing ? ` The user is currently looking at ${SPORT_NAMES[viewing] || viewing}, which is a hint, not a limit.` : ''}
 
-You can see everything on the site through tools: odds for every sport (moneyline, spread, total), each bet's best price at licensed US sportsbooks, fair chance, fair price and edge, plus weather, team EPA (NFL and college football), and player props. Look things up with the tools. Never guess a price, team, line or number.
+You can see everything on the site through tools: odds for every sport (moneyline, spread, total), each bet's best price at licensed US sportsbooks, fair chance, fair price and edge, plus weather, team stats (EPA per play for NFL and college football; offensive, defensive and net rating for the NBA), and player props. Look things up with the tools. Never guess a price, team, line or number.
 - "fair chance" = all sportsbooks' prices combined with each book's built-in cut removed. It is the market's estimate, not a separate prediction.
 - "edge" = how the best price compares with the fair chance. Positive is a bargain; negative is what the sportsbook keeps on average.
 - A parlay must be placed at one sportsbook. Legs can come from different sports. Use price_bet for every parlay or payout calculation; never do that math yourself.
-- Weather and EPA are useful context: strong wind, rain or snow can lower scoring and passing; a much higher EPA usually means the stronger team. Mention them when relevant, but do not invent precise effects. The price-based edge is the main measure of value.
+- Weather and EPA are useful context: strong wind, rain or snow can lower scoring and passing; a much higher net EPA or net rating usually means the stronger team (small early-season samples are noisy). Mention them when relevant, but do not invent precise effects. The price-based edge is the main measure of value.
 
 How to answer:
 - Be short and plain, so a 5th grader could follow: usually 2 to 6 sentences or a short dash list. Plain text, no markdown headers, tables or bold. Never show internal ids (like B3, G2, P5).

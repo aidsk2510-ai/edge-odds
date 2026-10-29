@@ -9,6 +9,7 @@ import { normalize } from './venues.js';
 
 const NFLVERSE = (process.env.NFLVERSE_BASE || 'https://github.com/nflverse/nflverse-data/releases/download').replace(/\/$/, '');
 const CFBD = (process.env.CFBD_API_BASE || 'https://api.collegefootballdata.com').replace(/\/$/, '');
+const SDV = (process.env.SPORTSDATAVERSE_BASE || 'https://github.com/sportsdataverse/sportsdataverse-data/releases/download').replace(/\/$/, '');
 
 const NFL_TEAMS = {
   ARI: 'Arizona Cardinals', ATL: 'Atlanta Falcons', BAL: 'Baltimore Ravens', BUF: 'Buffalo Bills', CAR: 'Carolina Panthers',
@@ -85,7 +86,46 @@ export async function loadNflEpa(season = footballSeason()) {
     name: NFL_TEAMS[abbr], off: t.oe / t.op, def: t.de / t.dp, net: t.oe / t.op - t.de / t.dp, plays: t.op,
   }));
   rank(teams, 'net', true); rank(teams, 'off', true); rank(teams, 'def', false);
-  return { season, through: maxWeek ? `Week ${maxWeek}` : null, count: teams.length, teams };
+  return { kind: 'epa', season, through: maxWeek ? `Week ${maxWeek}` : null, count: teams.length, teams };
+}
+
+// NBA seasons are named by the year they end: the 2026-27 season is "2027".
+export const nbaSeason = (d = new Date()) => (d.getUTCMonth() >= 7 ? d.getUTCFullYear() + 1 : d.getUTCFullYear());
+
+// NBA Offensive / Defensive / Net Rating (points per 100 possessions), from ESPN team box scores
+// published by sportsdataverse (free, updated daily). Possessions per team per game:
+//   shots attempted - offensive rebounds + turnovers + 0.44 x free throws attempted,
+// averaged between the two teams (the standard estimate).
+export async function loadNbaRatings(season = nbaSeason()) {
+  const res = await fetch(`${SDV}/espn_nba_team_boxscores/team_box_${season}.csv`);
+  if (!res.ok) throw new Error(`sportsdataverse ${res.status}`);
+  const games = new Map();
+  let cols = null, lastDate = '';
+  await streamCsv(Readable.fromWeb(res.body), (r) => {
+    if (!cols) { cols = Object.fromEntries(r.map((name, i) => [name, i])); return; }
+    if (r[cols.season_type] === '1') return; // skip preseason
+    const n = (k) => Number(r[cols[k]]) || 0;
+    const row = { team: r[cols.team_display_name], pts: n('team_score'), poss: n('field_goals_attempted') - n('offensive_rebounds') + n(cols.total_turnovers != null ? 'total_turnovers' : 'turnovers') + 0.44 * n('free_throws_attempted') };
+    if (!row.team) return;
+    if (!games.has(r[cols.game_id])) games.set(r[cols.game_id], []);
+    games.get(r[cols.game_id]).push(row);
+    if (r[cols.game_date] > lastDate) lastDate = r[cols.game_date];
+  });
+  const totals = {};
+  for (const pair of games.values()) {
+    if (pair.length !== 2 || !pair[0].pts || !pair[1].pts) continue;
+    const poss = (pair[0].poss + pair[1].poss) / 2;
+    for (const [me, op] of [[pair[0], pair[1]], [pair[1], pair[0]]]) {
+      const t = (totals[me.team] ||= { pts: 0, opp: 0, poss: 0, g: 0 });
+      t.pts += me.pts; t.opp += op.pts; t.poss += poss; t.g++;
+    }
+  }
+  const teams = Object.entries(totals).filter(([, t]) => t.poss > 0).map(([name, t]) => ({
+    name, off: (100 * t.pts) / t.poss, def: (100 * t.opp) / t.poss, net: (100 * (t.pts - t.opp)) / t.poss, games: t.g,
+  }));
+  rank(teams, 'net', true); rank(teams, 'off', true); rank(teams, 'def', false);
+  const through = lastDate ? `games through ${new Date(lastDate + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : null;
+  return { kind: 'rating', season: `${season - 1}-${String(season).slice(2)}`, through, count: teams.length, teams };
 }
 
 export async function loadCfbEpa(season = footballSeason()) {
@@ -99,7 +139,7 @@ export async function loadCfbEpa(season = footballSeason()) {
     .filter((t) => Number.isFinite(t.offense?.ppa) && Number.isFinite(t.defense?.ppa))
     .map((t) => ({ name: t.team, off: t.offense.ppa, def: t.defense.ppa, net: t.offense.ppa - t.defense.ppa, plays: t.offense.plays }));
   rank(teams, 'net', true); rank(teams, 'off', true); rank(teams, 'def', false);
-  return { season, through: null, count: teams.length, teams };
+  return { kind: 'epa', season, through: null, count: teams.length, teams };
 }
 
 // Odds feeds and stats sites spell some schools differently.
@@ -110,7 +150,7 @@ const ALIASES = [
   ['texas san antonio', 'utsa'], ['central florida', 'ucf'], ['southern california', 'usc'], ['brigham young', 'byu'],
   ['southern methodist', 'smu'], ['texas christian', 'tcu'], ['louisiana state', 'lsu'], ['alabama birmingham', 'uab'],
   ['nevada las vegas', 'unlv'], ['texas el paso', 'utep'], ['miami fl', 'miami'], ['miami ohio', 'miami oh'], ['hawaii', 'hawai i'],
-  ['middle tennessee state', 'middle tennessee'], ['san jose state', 'san jose state'], ['western kentucky', 'western kentucky'],
+  ['middle tennessee state', 'middle tennessee'], ['los angeles clippers', 'la clippers'], ['san jose state', 'san jose state'], ['western kentucky', 'western kentucky'],
 ];
 const ALIAS = new Map();
 for (const [a, b] of ALIASES) { ALIAS.set(a, b); ALIAS.set(b, a); }
