@@ -90,7 +90,7 @@
   tr.ev td { background: var(--panel-2); border-top: 1px solid var(--line); padding: 10px 16px; }
   tr.ev:first-child td { border-top: 0; }
   tr.ev td.sel { background: var(--panel-2); }
-  .evhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .evhead { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; max-width: calc(min(100vw, 1440px) - 80px); }
   .evtime { font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .livepill { font-size: 10px; font-weight: 800; letter-spacing: 0.1em; color: #fff; background: var(--live); padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 5px; }
   .livepill::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #fff; animation: pulse 1.4s ease-in-out infinite; }
@@ -126,6 +126,12 @@
   .legend { display: flex; flex-wrap: wrap; gap: 18px; color: var(--faint); font-size: 12px; margin-top: 14px; }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  .wx { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px 2px 7px; white-space: nowrap; }
+  .wx .ic { font-size: 13px; line-height: 1; }
+  .wx b { color: var(--text); font-weight: 600; }
+  .wx .roof { color: var(--faint); }
+  .wx.bad { border-color: rgba(76, 195, 255, 0.45); }
 
   /* Player props */
   .propsbtn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 3px 9px; font-size: 12px; font-weight: 600; }
@@ -212,7 +218,7 @@
 <div class="scrim" id="scrim"></div>
 <aside class="drawer" id="drawer" aria-hidden="true" aria-label="Player props">
   <div class="dhead">
-    <div class="dtitle"><span id="pWhen"></span><h2 id="pTitle">Player props</h2><button class="x" id="pClose" aria-label="Close">×</button></div>
+    <div class="dtitle"><span id="pWhen"></span><h2 id="pTitle">Player props</h2><span id="pWx"></span><button class="x" id="pClose" aria-label="Close">×</button></div>
     <div class="pmarkets" id="pMarkets"></div>
     <div class="drow"><input class="search" id="pSearch" type="search" placeholder="Search players…" autocomplete="off"><span class="status" id="pStatus"></span></div>
   </div>
@@ -378,7 +384,18 @@
           }
           bookmakers.push({ key: bk, title: BOOKS[bk][0], markets: [{ key: market, outcomes }] });
         }
-        events.push({ id: `${sportKey}-${i}-${hour}`, sport_key: sportKey, commence_time: new Date(start).toISOString(), home_team: home, away_team: away, bookmakers });
+        // Simulated weather
+        const wr = rng(`${home}:wx:${Math.floor(hour / 6)}`);
+        let weather = null;
+        if (['nba', 'ncaab', 'nhl', 'mma'].includes(sport.kind) || (sport.kind === 'nfl' && wr() < 0.3)) weather = { type: 'indoor' };
+        else if (sport.kind !== 'ncaaf' || wr() < 0.8) {
+          const codes = [0, 1, 2, 3, 3, 61, 63, 80, 71];
+          weather = { type: wr() < 0.1 ? 'retractable' : 'outdoor', tempF: Math.round(28 + wr() * 45), windMph: Math.round(2 + wr() * 18), rainPct: 0, code: codes[Math.floor(wr() * codes.length)] };
+          weather.rainPct = weather.code >= 51 ? Math.round(50 + wr() * 45) : Math.round(wr() * 20);
+          if (weather.code >= 71 && weather.tempF > 34) weather.tempF = 30;
+          if (i >= 7) weather = { type: weather.type, later: true };
+        }
+        events.push({ id: `${sportKey}-${i}-${hour}`, sport_key: sportKey, commence_time: new Date(start).toISOString(), home_team: home, away_team: away, bookmakers, weather });
       }
       return { events };
     }
@@ -514,6 +531,31 @@
     return rows;
   }
 
+  // WMO weather codes -> [icon, words]
+  function wxLabel(code) {
+    if (code === 0) return ['☀️', 'Clear'];
+    if (code <= 2) return ['⛅', 'Partly cloudy'];
+    if (code === 3) return ['☁️', 'Cloudy'];
+    if (code <= 48) return ['🌫️', 'Fog'];
+    if (code <= 57) return ['🌦️', 'Drizzle'];
+    if (code <= 67) return ['🌧️', 'Rain'];
+    if (code <= 77) return ['❄️', 'Snow'];
+    if (code <= 82) return ['🌧️', 'Showers'];
+    if (code <= 86) return ['🌨️', 'Snow showers'];
+    return ['⛈️', 'Thunderstorms'];
+  }
+  function weatherChip(w) {
+    if (!w) return '';
+    if (w.type === 'indoor') return '<span class="wx"><span class="ic">🏟️</span>Indoors</span>';
+    const roof = w.type === 'retractable' ? '<span class="roof">· Retractable roof</span>' : '';
+    if (w.later || w.tempF == null) return `<span class="wx" title="Forecasts are available about 2 weeks ahead"><span class="ic">🗓️</span>Forecast closer to game day ${roof}</span>`;
+    const [ic, words] = wxLabel(w.code);
+    // Flag weather that can affect a game: heavy wind, likely rain/snow, or extreme temps
+    const bad = w.windMph >= 15 || w.rainPct >= 50 || w.code >= 71 || w.tempF <= 25 || w.tempF >= 95;
+    const extra = [w.windMph != null ? `${w.windMph} mph wind` : '', w.rainPct ? `${w.rainPct}% precip` : ''].filter(Boolean).join(' · ');
+    return `<span class="wx ${bad ? 'bad' : ''}" title="${esc(words)}${extra ? ' · ' + esc(extra) : ''}"><span class="ic">${ic}</span><b>${w.tempF}°F</b>${esc(words)}${extra ? ' · ' + esc(extra) : ''} ${roof}</span>`;
+  }
+
   const timeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
   function render() {
@@ -573,7 +615,7 @@
       const holdHtml = hold == null ? '' : `<span class="hold ${isArb ? 'arb' : ''}" title="Combined margin if you take the best price on every side">${isArb ? 'ARB ' : 'Best-line hold '}${(hold * 100).toFixed(1)}%</span>`;
       const title = sport.kind === 'soccer' ? `${ev.home_team} vs ${ev.away_team}` : sport.kind === 'mma' ? `${ev.away_team} vs ${ev.home_team}` : `${ev.away_team} @ ${ev.home_team}`;
 
-      html += `<tr class="ev"><td class="sel" colspan="${books.length + 2}"><div class="evhead">${ev.live ? '<span class="livepill">LIVE</span>' : `<span class="evtime">${esc(timeFmt.format(new Date(ev.commence_time)))}</span>`}<span class="evtitle">${esc(title)}</span><span class="push">${holdHtml}${PROPS[sport.kind] ? `<button class="propsbtn" data-ev="${esc(ev.id)}">Player props ›</button>` : ''}</span></div></td></tr>`;
+      html += `<tr class="ev"><td class="sel" colspan="${books.length + 2}"><div class="evhead">${ev.live ? '<span class="livepill">LIVE</span>' : `<span class="evtime">${esc(timeFmt.format(new Date(ev.commence_time)))}</span>`}<span class="evtitle">${esc(title)}</span>${weatherChip(ev.weather)}<span class="push">${holdHtml}${PROPS[sport.kind] ? `<button class="propsbtn" data-ev="${esc(ev.id)}">Player props ›</button>` : ''}</span></div></td></tr>`;
 
       rows.forEach((row, i) => {
         const { best, bestBook } = bests[i];
@@ -619,7 +661,8 @@
     const title = sport.kind === 'soccer' ? `${ev.home_team} vs ${ev.away_team}` : `${ev.away_team} @ ${ev.home_team}`;
     P.title.textContent = title;
     const live = new Date(ev.commence_time).getTime() <= Date.now();
-    P.when.innerHTML = live ? '<span class="livepill">LIVE</span>' : `<span class="evtime">${esc(timeFmt.format(new Date(ev.commence_time)))}</span>`;
+    P.when.innerHTML = (live ? '<span class="livepill">LIVE</span>' : `<span class="evtime">${esc(timeFmt.format(new Date(ev.commence_time)))}</span>`);
+    document.getElementById('pWx').innerHTML = weatherChip(ev.weather);
     P.markets.innerHTML = PROPS[sport.kind].map(([k, label]) => `<button data-m="${k}" aria-pressed="${k === props.market}">${esc(label)}</button>`).join('');
     P.drawer.classList.add('open'); P.scrim.classList.add('open'); P.drawer.setAttribute('aria-hidden', 'false');
     document.body.classList.add('locked');
