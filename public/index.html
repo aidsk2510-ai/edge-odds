@@ -202,6 +202,21 @@
   .note .who span { color: var(--faint); font-weight: 500; letter-spacing: 0.02em; text-transform: none; }
   .note p { margin: 0; white-space: pre-line; line-height: 1.6; font-size: 14px; }
   .note.loading p { color: var(--muted); }
+  details.howto { margin-top: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  details.howto summary { cursor: pointer; list-style: none; padding: 11px 14px; font-size: 13px; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  details.howto summary::-webkit-details-marker { display: none; }
+  details.howto summary::after { content: '▾'; margin-left: auto; transition: transform 0.15s; }
+  details.howto[open] summary::after { transform: rotate(180deg); }
+  details.howto summary:hover { color: var(--text); }
+  details.howto summary .i { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--faint); display: grid; place-items: center; font-size: 11px; font-style: normal; font-weight: 700; }
+  .howbody { padding: 2px 14px 14px; display: grid; gap: 12px; font-size: 13px; line-height: 1.55; }
+  .howstep { display: grid; grid-template-columns: 24px 1fr; gap: 10px; }
+  .howstep .n { width: 22px; height: 22px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); display: grid; place-items: center; font: 700 11px var(--mono); color: var(--accent); }
+  .howstep b { color: var(--text); }
+  .howstep p { margin: 2px 0 0; color: var(--muted); }
+  .howex { margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line-soft); font: 12px/1.6 var(--mono); color: var(--muted); }
+  .howex em { font-style: normal; color: var(--accent); }
+  .howcaveat { font-size: 12px; color: var(--faint); border-top: 1px solid var(--line-soft); padding-top: 10px; }
   .psec { margin-top: 22px; }
   .psec h3 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
   .psec .hint { font-size: 12px; color: var(--faint); margin-bottom: 10px; }
@@ -1065,7 +1080,7 @@
 
   // ---------- Edge Picks ----------
   const PK = { drawer: document.getElementById('picksDrawer'), body: document.getElementById('pkBody'), title: document.getElementById('pkTitle'), status: document.getElementById('pkStatus') };
-  const picks = { open: false, sport: null, token: 0, timer: null };
+  const picks = { open: false, sport: null, token: 0, timer: null, howOpen: (() => { try { return store?.getItem('edge.how') === '1'; } catch { return false; } })() };
   const pct0 = (x) => `${Math.round(x * 100)}%`;
   const oneIn = (p) => (p > 0 ? `about 1 in ${Math.max(1, Math.round(1 / p))}` : '');
   const edgeTag = (e) => `<span class="tag ${e >= 0 ? 'good' : e <= -0.03 ? 'bad' : ''}" title="How the price compares with the fair chance. Positive = a bargain. Negative = what the sportsbook keeps on average.">edge ${(e * 100).toFixed(1)}%</span>`;
@@ -1116,6 +1131,31 @@
     if (data.pending && attempt < 6) picks.timer = setTimeout(() => loadPicks(attempt + 1), 2500);
   }
 
+  // "How these numbers work": short explainer, with today's top pick as the worked example.
+  function howItWorks(x) {
+    const chance = x.fair * 100;
+    const c2 = chance.toFixed(2); // two decimals so the worked math lands exactly on the fair price shown
+    const fairCalc = chance < 50
+      ? `(100 − ${c2}) ÷ ${c2} × 100 = <em>${esc(x.fairOdds)}</em>`
+      : `−(${c2} ÷ (100 − ${c2})) × 100 = <em>${esc(x.fairOdds)}</em>`;
+    const edge = (x.edge * 100).toFixed(1);
+    return `<details class="howto" ${picks.howOpen ? 'open' : ''}>
+      <summary><i class="i">i</i>How these numbers work</summary>
+      <div class="howbody">
+        <div class="howstep"><span class="n">1</span><div><b>Chance to win</b>
+          <p>Every price is a hidden prediction. We turn each sportsbook's price into a percentage. Then we remove the book's built-in cut (that's why the two sides add up to more than 100%). Then we average every sportsbook together.</p>
+          <div class="howex">${esc(x.pick)}: ${x.books} sportsbooks average out to <em>${c2}%</em></div></div></div>
+        <div class="howstep"><span class="n">2</span><div><b>Fair price</b>
+          <p>That chance turned back into odds with no cut, so it's the price where neither you nor the sportsbook has an advantage.</p>
+          <div class="howex">${chance < 50 ? 'Underdog' : 'Favorite'}: ${fairCalc}</div></div></div>
+        <div class="howstep"><span class="n">3</span><div><b>Edge</b>
+          <p>The best price you can actually bet, compared with the fair price. Positive means it pays more than fair (a bargain). Negative is what the sportsbook keeps on average.</p>
+          <div class="howex">${esc(x.best.title)} pays ${esc(x.bestOdds)} vs fair ${esc(x.fairOdds)} → edge <em>${x.edge >= 0 ? '+' : ''}${edge}%</em></div></div></div>
+        <div class="howcaveat">These chances are the sportsbooks' combined opinion, not a separate prediction. Picks spot prices that are out of line with the rest of the market. They can't know anything the books don't.</div>
+      </div>
+    </details>`;
+  }
+
   function renderPicks(d) {
     const t = new Date(d.generatedAt || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     PK.status.textContent = `${d.demo ? 'Demo data' : 'Based on live odds'} · ${d.games || 0} upcoming game${d.games === 1 ? '' : 's'} · ${t}`;
@@ -1127,7 +1167,7 @@
       <div class="pitem">
         <div class="what"><b>${esc(x.pick)}</b><small>${esc(x.game)} · ${esc(shortTime(x.start))}</small></div>
         <div class="price"><b>${esc(x.bestOdds)}</b><small>${esc(x.best.title)}</small></div>
-        <div class="stats"><span class="tag">wins ${pct0(x.fair)} of the time</span><span class="tag">fair price ${esc(x.fairOdds)}</span>${edgeTag(x.edge)}<span class="tag">$10 returns $${(10 * x.best.price).toFixed(2)}</span></div>
+        <div class="stats"><span class="tag" title="All sportsbooks combined, with their cut removed. See How these numbers work.">wins ${pct0(x.fair)} of the time</span><span class="tag" title="The odds that match that chance exactly, with no sportsbook cut.">fair price ${esc(x.fairOdds)}</span>${edgeTag(x.edge)}<span class="tag">$10 returns $${(10 * x.best.price).toFixed(2)}</span></div>
       </div>`).join('');
     const parlays = (d.parlays || []).map((p) => `
       <div class="pitem">
@@ -1136,10 +1176,12 @@
         <div class="price"><b>${esc(p.odds)}</b><small>$10 returns $${(10 * p.dec).toFixed(2)}</small></div>
         <div class="stats"><span class="tag">hits ${pct0(p.hit)} · ${oneIn(p.hit)}</span>${edgeTag(p.ev)}</div>
       </div>`).join('');
-    PK.body.innerHTML = `${noteHtml}
+    PK.body.innerHTML = `${noteHtml}${howItWorks(d.singles[0])}
       <div class="psec"><h3>Best single bets</h3><div class="hint">Ranked by edge: how close each price is to a bargain. Moneylines, spreads and totals, licensed US sportsbooks only.</div><div class="plist">${singles}</div></div>
       ${parlays ? `<div class="psec"><h3>Best parlays</h3><div class="hint">Every leg is at the same sportsbook, because a parlay can only be placed at one book. One leg per game.</div><div class="plist">${parlays}</div></div>` : ''}
-      <div class="pfoot"><b>How this works:</b> a game's "fair chance" comes from all sportsbooks combined, after removing the cut each one builds into its prices. "Edge" compares the best price with that fair chance. Picks are math, not predictions about injuries or news. Prices move, so check them at the sportsbook before betting. Bet only what you can afford to lose.</div>`;
+      <div class="pfoot">Picks are math, not predictions about injuries or news. Prices move, so check them at the sportsbook before betting. Bet only what you can afford to lose.</div>`;
+    const how = PK.body.querySelector('details.howto');
+    if (how) how.addEventListener('toggle', () => { picks.howOpen = how.open; try { store?.setItem('edge.how', how.open ? '1' : '0'); } catch {} });
   }
 
   document.getElementById('picksBtn').addEventListener('click', openPicks);
