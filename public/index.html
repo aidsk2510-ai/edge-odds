@@ -85,7 +85,7 @@
   thead th { position: sticky; top: 0; z-index: 3; background: var(--panel-2); border-bottom: 1px solid var(--line); padding: 10px 8px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; text-align: center; white-space: nowrap; }
   thead th .bk { display: inline-flex; align-items: center; gap: 6px; }
   thead th .bk i { width: 8px; height: 8px; border-radius: 2px; }
-  th.sel, td.sel { position: sticky; left: 0; z-index: 2; text-align: left; background: var(--panel); min-width: 230px; }
+  th.sel, td.sel { position: sticky; left: 0; z-index: 2; text-align: left; background: var(--panel); min-width: 270px; }
   thead th.sel { z-index: 4; background: var(--panel-2); padding-left: 16px; }
   th.bestcol, td.bestcol { min-width: 104px; border-right: 1px solid var(--line); }
 
@@ -267,6 +267,15 @@
   .askfab:hover { transform: translateY(-1px); }
   body.locked .askfab { display: none; }
 
+  .tstat { display: flex; width: max-content; flex-wrap: nowrap; align-items: center; gap: 0; margin: 5px 0 0; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; vertical-align: 1px; font-family: var(--mono); font-size: 11px; cursor: help; }
+  .tstat > span { padding: 2px 6px; display: inline-flex; gap: 4px; align-items: baseline; border-left: 1px solid var(--line-soft); white-space: nowrap; color: var(--muted); }
+  .tstat > span:first-child { border-left: 0; }
+  .tstat .k { font-family: 'Inter Tight', sans-serif; font-size: 10px; letter-spacing: 0.04em; color: var(--faint); text-transform: uppercase; }
+  .tstat .v { font-weight: 600; color: var(--text); }
+  .tstat .r { color: var(--faint); font-weight: 500; }
+  .tstat .good .v { color: var(--up); } .tstat .bad .v { color: var(--down); }
+  .tstat .lbl { background: var(--panel-2); color: var(--faint); font-family: 'Inter Tight', sans-serif; font-size: 10px; letter-spacing: 0.06em; }
+
   /* Player props */
   .propsbtn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 3px 9px; font-size: 12px; font-weight: 600; }
   .propsbtn:hover { border-color: var(--accent); color: var(--accent); }
@@ -302,7 +311,10 @@
     th.sel, td.sel { min-width: 150px; }
     table { min-width: 0; }
     td.sel { font-size: 13px; white-space: normal; max-width: 160px; }
-    td.sel .epa { display: flex; width: max-content; margin: 4px 0 0; }
+    td.sel .epa { display: flex; width: max-content; max-width: 100%; margin: 4px 0 0; }
+    td.sel .tstat { flex-wrap: wrap; width: auto; max-width: 100%; }
+    .tstat .lbl { display: none; }
+    .tstat > span { border-left: 0; }
     .board { max-height: none; }
   }
 </style>
@@ -568,13 +580,20 @@
           if (i >= 7) weather = { type: weather.type, later: true };
         }
         let epa = null;
+        if (sport.kind === 'nba') {
+          const er = rng(`${sportKey}:rtg:${Math.floor(hour / 24)}`);
+          const table = TEAMS.nba.map((t) => { const off = 106 + er() * 14, def = 106 + er() * 14; return { t, off, def, net: off - def }; });
+          const rk = (team, key, desc) => [...table].sort((a, b) => (desc ? b[key] - a[key] : a[key] - b[key])).findIndex((x) => x.t === team) + 1;
+          const pick = (team) => { const x = table.find((y) => y.t === team); return { net: x.net, off: x.off, def: x.def, netRank: Math.ceil(rk(team, 'net', true) * 30 / table.length), offRank: Math.ceil(rk(team, 'off', true) * 30 / table.length), defRank: Math.ceil(rk(team, 'def', false) * 30 / table.length) }; };
+          epa = { kind: 'rating', home: pick(home), away: pick(away), of: 30, through: 'games through Oct 28', season: '2026-27' };
+        }
         if (sport.kind === 'nfl' || sport.kind === 'ncaaf') {
           const n = sport.kind === 'nfl' ? 32 : 136;
           const er = rng(`${sportKey}:epa:${Math.floor(hour / 24)}`);
           const table = TEAMS[sport.kind].map((t) => { const off = (er() - 0.5) * 0.4, def = (er() - 0.5) * 0.3; return { t, off, def, net: off - def }; });
           const rankOf = (t, key, desc) => [...table].sort((a, b) => (desc ? b[key] - a[key] : a[key] - b[key])).findIndex((x) => x.t === t) + 1;
           const pick = (team) => { const x = table.find((y) => y.t === team); return { net: x.net, off: x.off, def: x.def, netRank: Math.ceil(rankOf(team, 'net', true) * n / table.length), offRank: Math.ceil(rankOf(team, 'off', true) * n / table.length), defRank: Math.ceil(rankOf(team, 'def', false) * n / table.length) }; };
-          epa = { home: pick(home), away: pick(away), of: n, through: 'Week 8', season: 2026 };
+          epa = { kind: 'epa', home: pick(home), away: pick(away), of: n, through: 'Week 8', season: 2026 };
         }
         events.push({ id: `${sportKey}-${i}-${hour}`, sport_key: sportKey, commence_time: new Date(start).toISOString(), home_team: home, away_team: away, bookmakers, weather, epa });
       }
@@ -735,9 +754,31 @@
   const sgn = (x) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(2);
   function epaChip(t, meta, short) {
     if (!t) return '';
-    const cls = t.net >= 0.05 ? 'pos' : t.net <= -0.05 ? 'neg' : '';
-    const tip = `Net EPA/play ${sgn(t.net)} (#${t.netRank} of ${meta.of})\nOffense ${sgn(t.off)} per play (#${t.offRank})\nDefense ${sgn(t.def)} per play allowed (#${t.defRank}, lower is better)\n${meta.season} season${meta.through ? ' through ' + meta.through : ''}`;
-    return `<span class="epa ${cls}" title="${esc(tip)}">${short ? `<span class="lbl">${esc(short)}</span>` : '<span class="lbl">EPA</span>'}${sgn(t.net)}<i>#${t.netRank}</i></span>`;
+    const big = meta.kind === 'rating' ? 3 : 0.05;
+    const cls = t.net >= big ? 'pos' : t.net <= -big ? 'neg' : '';
+    const tip = meta.kind === 'rating'
+      ? `Net rating ${t.net.toFixed(1)} (#${t.netRank} of ${meta.of})\nOffensive rating ${t.off.toFixed(1)} (#${t.offRank})\nDefensive rating ${t.def.toFixed(1)} (#${t.defRank}, lower is better)\n${meta.season} season${meta.through ? ', ' + meta.through : ''}`
+      : `Net EPA/play ${sgn(t.net)} (#${t.netRank} of ${meta.of})\nOffense ${sgn(t.off)} per play (#${t.offRank})\nDefense ${sgn(t.def)} per play allowed (#${t.defRank}, lower is better)\n${meta.season} season${meta.through ? ' through ' + meta.through : ''}`;
+    const netTxt = meta.kind === 'rating' ? (t.net >= 0 ? '+' : '\u2212') + Math.abs(t.net).toFixed(1) : sgn(t.net);
+    return `<span class="epa ${cls}" title="${esc(tip)}">${short ? `<span class="lbl">${esc(short)}</span>` : '<span class="lbl">EPA</span>'}${netTxt}<i>#${t.netRank}</i></span>`;
+  }
+
+  // Full team-stats chip: NET · OFF · DEF, each with its rank. Football = EPA per play; NBA = points per 100 possessions.
+  function statChip(t, meta) {
+    if (!t) return '';
+    const rating = meta.kind === 'rating';
+    const n = meta.of || 32;
+    const tier = (rank) => (rank <= Math.ceil(n / 3) ? 'good' : rank > n - Math.ceil(n / 3) ? 'bad' : '');
+    const net = rating ? (t.net >= 0 ? '+' : '\u2212') + Math.abs(t.net).toFixed(1) : sgn(t.net);
+    const off = rating ? t.off.toFixed(1) : sgn(t.off);
+    const def = rating ? t.def.toFixed(1) : sgn(t.def);
+    const tip = rating
+      ? `Points per 100 possessions (${meta.season} season${meta.through ? ', ' + meta.through : ''})\nNet rating ${net} (#${t.netRank} of ${n}): offense minus defense\nOffensive rating ${off} (#${t.offRank}): points scored per 100 possessions\nDefensive rating ${def} (#${t.defRank}): points allowed per 100 possessions, lower is better`
+      : `EPA per play (${meta.season} season${meta.through ? ' through ' + meta.through : ''})\nNet ${net} (#${t.netRank} of ${n}): offense minus defense\nOffense ${off} (#${t.offRank}): points gained per play vs an average play\nDefense ${def} (#${t.defRank}): points allowed per play, lower is better`;
+    return `<span class="tstat" title="${esc(tip)}"><span class="lbl">${rating ? 'RTG' : 'EPA'}</span>`
+      + `<span class="${tier(t.netRank)}"><span class="k">Net</span><span class="v">${net}</span><span class="r">#${t.netRank}</span></span>`
+      + `<span class="${tier(t.offRank)}"><span class="k">Off</span><span class="v">${off}</span><span class="r">#${t.offRank}</span></span>`
+      + `<span class="${tier(t.defRank)}"><span class="k">Def</span><span class="v">${def}</span><span class="r">#${t.defRank}</span></span></span>`;
   }
 
   // WMO weather codes -> [icon, words]
@@ -836,7 +877,7 @@
       rows.forEach((row, i) => {
         const { best, bestBook } = bests[i];
         const teamEpa = ev.epa && (row.name === ev.home_team ? ev.epa.home : row.name === ev.away_team ? ev.epa.away : null);
-        html += `<tr><td class="sel">${esc(row.label)}${teamEpa ? epaChip(teamEpa, ev.epa) : ''}</td><td class="bestcol">${best ? `<div class="bestcell"><span class="px">${best.point != null ? `<span class="pt">${fmtPoint(best.point, state.market)}</span>` : ''}${fmtPrice(best.price)}</span><small>${esc(BOOKS[bestBook.key]?.[0] || bestBook.title)}</small></div>` : '<span class="px none">—</span>'}</td>`;
+        html += `<tr><td class="sel">${esc(row.label)}${teamEpa ? statChip(teamEpa, ev.epa) : ''}</td><td class="bestcol">${best ? `<div class="bestcell"><span class="px">${best.point != null ? `<span class="pt">${fmtPoint(best.point, state.market)}</span>` : ''}${fmtPrice(best.price)}</span><small>${esc(BOOKS[bestBook.key]?.[0] || bestBook.title)}</small></div>` : '<span class="px none">—</span>'}</td>`;
         for (const b of books) {
           const bm = ev.bookmakers.find((x) => x.key === b.key);
           const o = bm?.markets[0].outcomes.find((x) => x.name === row.name);
