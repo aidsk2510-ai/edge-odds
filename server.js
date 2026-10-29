@@ -8,6 +8,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { INDOOR_SPORTS, venueFor } from './venues.js';
 
 const ROOT = fileURLToPath(new URL('./public/', import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -46,6 +47,10 @@ const PROP_MARKETS = {
 };
 
 const cache = new Map(); // key -> { at, body, inflight }
+
+// Weather from Open-Meteo (https://open-meteo.com): free, no key. Check their terms before commercial use.
+const WEATHER_BASE = (process.env.WEATHER_API_BASE || 'https://api.open-meteo.com').replace(/\/$/, '');
+const WEATHER_TTL = 30 * 60 * 1000;
 
 async function upstream(path, params) {
   const url = new URL(API_BASE + path);
@@ -87,6 +92,47 @@ async function cached(key, ttl, loader) {
   return inflight;
 }
 
+// Hourly forecast for one venue (16 days ahead), cached for 30 minutes.
+function forecast(lat, lon) {
+  return cached(`wx:${lat},${lon}`, WEATHER_TTL, async () => {
+    const url = new URL(WEATHER_BASE + '/v1/forecast');
+    const params = {
+      latitude: lat, longitude: lon, forecast_days: 16, timeformat: 'unixtime', timezone: 'GMT',
+      hourly: 'temperature_2m,precipitation_probability,weather_code,wind_speed_10m',
+      temperature_unit: 'fahrenheit', wind_speed_unit: 'mph',
+    };
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Weather ${res.status}`);
+    return (await res.json()).hourly;
+  });
+}
+
+// What to show for a game: indoors, a forecast for kickoff (or now, if live), or null if the venue is unknown.
+async function weatherFor(sport, ev) {
+  if (INDOOR_SPORTS.has(sport)) return { type: 'indoor' };
+  const venue = venueFor(sport, ev.home_team);
+  if (!venue) return null;
+  const [lat, lon, roof] = venue;
+  if (roof === 'dome') return { type: 'indoor' };
+  try {
+    const h = await forecast(lat, lon);
+    const at = Math.max(Date.now(), new Date(ev.commence_time).getTime()) / 1000;
+    let best = -1;
+    h.time.forEach((t, i) => { if (best < 0 || Math.abs(t - at) < Math.abs(h.time[best] - at)) best = i; });
+    if (best < 0 || Math.abs(h.time[best] - at) > 2 * 3600) return { type: roof, later: true }; // beyond the forecast window
+    return {
+      type: roof,
+      tempF: Math.round(h.temperature_2m[best]),
+      windMph: Math.round(h.wind_speed_10m[best]),
+      rainPct: h.precipitation_probability[best],
+      code: h.weather_code[best],
+    };
+  } catch {
+    return null;
+  }
+}
+
 function sendJSON(res, status, body, maxAge = 0) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -124,7 +170,8 @@ async function handleApi(req, res, url) {
       const nextStart = Math.min(...data.map((ev) => new Date(ev.commence_time).getTime()).filter((t) => t > now));
       return { fetchedAt: new Date(now).toISOString(), quota, live, nextStart: Number.isFinite(nextStart) ? nextStart : null, events: data };
     });
-    return sendJSON(res, 200, body, Math.floor((body.live ? LIVE_TTL : ODDS_TTL) / 2000));
+    const events = await Promise.all(body.events.map(async (ev) => ({ ...ev, weather: await weatherFor(sport, ev) })));
+    return sendJSON(res, 200, { ...body, events }, Math.floor((body.live ? LIVE_TTL : ODDS_TTL) / 2000));
   }
 
   if (url.pathname === '/api/props') {
@@ -159,7 +206,7 @@ async function handleApi(req, res, url) {
 // Props create one cache entry per game+market; drop ones nobody has asked for in a while.
 setInterval(() => {
   const cutoff = Date.now() - 2 * 60 * 60 * 1000;
-  for (const [k, v] of cache) if (k.startsWith('props:') && v.at < cutoff && !v.inflight) cache.delete(k);
+  for (const [k, v] of cache) if ((k.startsWith('props:') || k.startsWith('wx:')) && v.at < cutoff && !v.inflight) cache.delete(k);
 }, 15 * 60 * 1000).unref();
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
