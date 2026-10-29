@@ -104,6 +104,7 @@ function cached(key, ttl, loader) {
       return body;
     })
     .catch((e) => {
+      console.warn(`[cache] refresh failed for ${key}: ${e.message}`);
       const cur = cache.get(key);
       if (cur && 'body' in cur) { // keep serving the old copy; retry in a minute
         cache.set(key, { at: Date.now(), body: cur.body, ttl: Math.min(cur.ttl, 60 * 1000) });
@@ -271,7 +272,9 @@ const EPA_LOADERS = { americanfootball_nfl: loadNflEpa, americanfootball_ncaaf: 
 async function epaFinder(sport) {
   if (!EPA_LOADERS[sport]) return null;
   try {
-    const stats = await cached(`epa:${sport}`, EPA_TTL, () => EPA_LOADERS[sport]());
+    // If a stats source is down, remember that for 10 minutes instead of retrying on every page load.
+    const stats = await cached(`epa:${sport}`, (b) => (b ? EPA_TTL : 10 * 60 * 1000),
+      () => EPA_LOADERS[sport]().catch((e) => { console.warn(`[epa] ${sport}: ${e.message}`); return null; }));
     if (!stats) return null;
     const find = indexTeams(stats);
     const pick = (name) => {
@@ -338,7 +341,10 @@ async function handleApi(req, res, url) {
     ]);
     const events = body.events.map((ev, i) => ({ ...ev, weather: weather[i], epa: epa ? epa(ev) : null }));
     const { quota, ...pub } = body; // credit balance stays private (it's in the server log)
-    return sendJSON(res, 200, { ...pub, events }, Math.floor((body.live ? LIVE_TTL : ODDS_TTL) / 2000));
+    // Tell the page when this is an older copy and a fresh one is on its way, so it can check back in a few seconds.
+    const entry = cache.get(`odds:${sport}:${market}`);
+    const refreshing = Boolean(entry?.inflight) || (entry && Date.now() - entry.at >= entry.ttl);
+    return sendJSON(res, 200, { ...pub, events, refreshing }); // no browser caching: the server cache handles load
   }
 
   if (url.pathname === '/api/props') {
@@ -365,7 +371,9 @@ async function handleApi(req, res, url) {
         }
       });
     const { quota, ...pub } = body;
-    return sendJSON(res, 200, pub, Math.floor((body.live ? PROPS_LIVE_TTL : PROPS_TTL) / 2000));
+    const entry = cache.get(`props:${event}:${market}`);
+    const refreshing = Boolean(entry?.inflight) || (entry && Date.now() - entry.at >= entry.ttl);
+    return sendJSON(res, 200, { ...pub, refreshing });
   }
 
   return sendJSON(res, 404, { error: 'not_found' });
