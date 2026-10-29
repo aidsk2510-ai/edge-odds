@@ -193,6 +193,35 @@
     .cside .bet { grid-column: 1 / -1; text-align: left; display: flex; gap: 8px; align-items: baseline; }
   }
 
+  /* Edge Picks */
+  .picksbtn { border: 1px solid rgba(198, 244, 50, 0.45); background: rgba(198, 244, 50, 0.08); color: var(--accent); border-radius: 8px; padding: 7px 12px; font-weight: 700; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
+  .picksbtn:hover { background: rgba(198, 244, 50, 0.16); }
+  aside.drawer.picks { width: min(760px, 100vw); }
+  .note { border: 1px solid rgba(198, 244, 50, 0.3); background: linear-gradient(180deg, rgba(198, 244, 50, 0.06), transparent); border-radius: 12px; padding: 14px 16px; }
+  .note .who { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); font-weight: 700; display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .note .who span { color: var(--faint); font-weight: 500; letter-spacing: 0.02em; text-transform: none; }
+  .note p { margin: 0; white-space: pre-line; line-height: 1.6; font-size: 14px; }
+  .note.loading p { color: var(--muted); }
+  .psec { margin-top: 22px; }
+  .psec h3 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .psec .hint { font-size: 12px; color: var(--faint); margin-bottom: 10px; }
+  .plist { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .pitem { display: grid; grid-template-columns: 1fr auto; gap: 6px 14px; padding: 12px 14px; border-top: 1px solid var(--line-soft); align-items: center; }
+  .pitem:first-child { border-top: 0; }
+  .pitem .what b { font-size: 14px; display: block; }
+  .pitem .what small { color: var(--muted); font-size: 12px; }
+  .pitem .price { text-align: right; font-family: var(--mono); }
+  .pitem .price b { font-size: 16px; color: var(--accent); }
+  .pitem .price small { display: block; color: var(--muted); font-size: 11px; font-family: 'Inter Tight', sans-serif; }
+  .pitem .stats { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag { font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
+  .tag.good { color: var(--up); border-color: rgba(53, 208, 127, 0.4); }
+  .tag.bad { color: var(--down); border-color: rgba(255, 107, 107, 0.35); }
+  .legs { margin: 4px 0 0; padding: 0; list-style: none; font-size: 13px; }
+  .legs li { padding: 2px 0; }
+  .legs li span { color: var(--muted); font-size: 12px; }
+  .pfoot { margin-top: 18px; font-size: 12px; color: var(--faint); line-height: 1.6; }
+
   /* Player props */
   .propsbtn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 3px 9px; font-size: 12px; font-weight: 600; }
   .propsbtn:hover { border-color: var(--accent); color: var(--accent); }
@@ -259,6 +288,7 @@
     <button data-v="live" aria-pressed="false">Live</button>
   </div>
   <input class="search" id="search" type="search" placeholder="Search teams…" autocomplete="off">
+  <button class="picksbtn" id="picksBtn"><span>✨</span> Edge Picks</button>
   <div class="spacer"></div>
   <div class="status" id="status"><span class="dot"></span><span id="statusText">Loading…</span></div>
   <button class="iconbtn" id="refresh" title="Refresh now"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg><span id="countdown">30s</span></button>
@@ -279,6 +309,11 @@
 
 <div class="scrim" id="scrim"></div>
 <div class="scrim calc" id="cScrim"></div>
+<aside class="drawer picks" id="picksDrawer" aria-hidden="true" aria-label="Edge Picks">
+  <div class="dhead"><div class="dtitle"><h2 id="pkTitle">✨ Edge Picks</h2><button class="x" id="pkClose" aria-label="Close">×</button></div>
+    <div class="status" id="pkStatus" style="font-size:12px"></div></div>
+  <div class="dbody" id="pkBody"></div>
+</aside>
 <div class="modal" id="calc" role="dialog" aria-modal="true" aria-labelledby="cTitle" aria-hidden="true">
   <div class="mhead"><div><h2 id="cTitle">Arb calculator</h2><div class="sub" id="cSub"></div></div><button class="x" id="cClose" aria-label="Close">×</button></div>
   <div class="mbody">
@@ -314,6 +349,7 @@
   </div>
 </footer>
 
+<script src="picks-engine.js"></script>
 <script>
 (() => {
   // ---------- Config ----------
@@ -1026,6 +1062,90 @@
     P.board.innerHTML = html + `</tbody></table>`;
     props.prev = nextPrev;
   }
+
+  // ---------- Edge Picks ----------
+  const PK = { drawer: document.getElementById('picksDrawer'), body: document.getElementById('pkBody'), title: document.getElementById('pkTitle'), status: document.getElementById('pkStatus') };
+  const picks = { open: false, sport: null, token: 0, timer: null };
+  const pct0 = (x) => `${Math.round(x * 100)}%`;
+  const oneIn = (p) => (p > 0 ? `about 1 in ${Math.max(1, Math.round(1 / p))}` : '');
+  const edgeTag = (e) => `<span class="tag ${e >= 0 ? 'good' : e <= -0.03 ? 'bad' : ''}" title="How the price compares with the fair chance. Positive = a bargain. Negative = what the sportsbook keeps on average.">edge ${(e * 100).toFixed(1)}%</span>`;
+  const shortTime = (iso) => { const d = new Date(iso); return d.getTime() <= Date.now() ? 'LIVE' : timeFmt.format(d); };
+
+  function openPicks() {
+    picks.open = true; picks.sport = state.sport;
+    PK.title.textContent = `✨ Edge Picks · ${sportOf(state.sport).label}`;
+    PK.body.innerHTML = '<div class="note loading"><div class="who">Edge Picks</div><p>Crunching every price at every sportsbook…</p></div>';
+    PK.drawer.classList.add('open'); P.scrim.classList.add('open'); PK.drawer.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('locked');
+    loadPicks();
+  }
+  function closePicks() {
+    picks.open = false; clearTimeout(picks.timer);
+    PK.drawer.classList.remove('open'); PK.drawer.setAttribute('aria-hidden', 'true');
+    if (!props.open) { P.scrim.classList.remove('open'); document.body.classList.remove('locked'); }
+  }
+
+  async function loadPicks(attempt = 0) {
+    if (!picks.open) return;
+    const token = ++picks.token;
+    let data;
+    try {
+      if (state.demo) {
+        const merged = new Map();
+        for (const m of ['h2h', 'spreads', 'totals']) {
+          for (const ev of Demo.generate(picks.sport, m).events) {
+            const key = ev.home_team;
+            if (!merged.has(key)) merged.set(key, { ...ev, bookmakers: ev.bookmakers.map((b) => ({ ...b, markets: [...b.markets] })) });
+            else for (const b of ev.bookmakers) { const t = merged.get(key).bookmakers.find((x) => x.key === b.key); if (t) t.markets.push(...b.markets); }
+          }
+        }
+        const r = EdgePicks.analyze([...merged.values()], { now: Date.now() - 1 });
+        data = { ...r, note: null, pending: false, plain: EdgePicks.plainSummary(r), demo: true };
+      } else {
+        const res = await fetch(`/api/picks?sport=${encodeURIComponent(picks.sport)}`, { cache: 'no-store' });
+        data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || res.status);
+      }
+    } catch (e) {
+      if (token === picks.token) PK.body.innerHTML = '<div class="empty"><b>Couldn’t load picks</b>Try again in a minute.</div>';
+      return;
+    }
+    if (token !== picks.token || !picks.open) return;
+    renderPicks(data);
+    // The AI note takes a few seconds the first time; check back for it.
+    if (data.pending && attempt < 6) picks.timer = setTimeout(() => loadPicks(attempt + 1), 2500);
+  }
+
+  function renderPicks(d) {
+    const t = new Date(d.generatedAt || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    PK.status.textContent = `${d.demo ? 'Demo data' : 'Based on live odds'} · ${d.games || 0} upcoming game${d.games === 1 ? '' : 's'} · ${t}`;
+    if (!d.singles?.length) { PK.body.innerHTML = '<div class="empty"><b>No picks right now</b>There are no upcoming games in the next 36 hours with enough sportsbooks posting prices. Check back later.</div>'; return; }
+    const noteHtml = d.note
+      ? `<div class="note"><div class="who">✨ AI analyst <span>written ${new Date(d.note.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span></div><p>${esc(d.note.text)}</p></div>`
+      : `<div class="note ${d.pending ? 'loading' : ''}"><div class="who">${d.pending ? '✨ AI analyst <span>writing…</span>' : 'Edge Picks summary'}</div><p>${esc(d.plain || '')}</p></div>`;
+    const singles = d.singles.map((x) => `
+      <div class="pitem">
+        <div class="what"><b>${esc(x.pick)}</b><small>${esc(x.game)} · ${esc(shortTime(x.start))}</small></div>
+        <div class="price"><b>${esc(x.bestOdds)}</b><small>${esc(x.best.title)}</small></div>
+        <div class="stats"><span class="tag">wins ${pct0(x.fair)} of the time</span><span class="tag">fair price ${esc(x.fairOdds)}</span>${edgeTag(x.edge)}<span class="tag">$10 returns $${(10 * x.best.price).toFixed(2)}</span></div>
+      </div>`).join('');
+    const parlays = (d.parlays || []).map((p) => `
+      <div class="pitem">
+        <div class="what"><b>${p.legs.length}-leg parlay at ${esc(p.title)}</b>
+          <ul class="legs">${p.legs.map((l) => `<li>• ${esc(l.pick)} <b style="display:inline;font-family:var(--mono);font-size:12px">${esc(l.odds)}</b> <span>${esc(l.game)}</span></li>`).join('')}</ul></div>
+        <div class="price"><b>${esc(p.odds)}</b><small>$10 returns $${(10 * p.dec).toFixed(2)}</small></div>
+        <div class="stats"><span class="tag">hits ${pct0(p.hit)} · ${oneIn(p.hit)}</span>${edgeTag(p.ev)}</div>
+      </div>`).join('');
+    PK.body.innerHTML = `${noteHtml}
+      <div class="psec"><h3>Best single bets</h3><div class="hint">Ranked by edge: how close each price is to a bargain. Moneylines, spreads and totals, licensed US sportsbooks only.</div><div class="plist">${singles}</div></div>
+      ${parlays ? `<div class="psec"><h3>Best parlays</h3><div class="hint">Every leg is at the same sportsbook, because a parlay can only be placed at one book. One leg per game.</div><div class="plist">${parlays}</div></div>` : ''}
+      <div class="pfoot"><b>How this works:</b> a game's "fair chance" comes from all sportsbooks combined, after removing the cut each one builds into its prices. "Edge" compares the best price with that fair chance. Picks are math, not predictions about injuries or news. Prices move, so check them at the sportsbook before betting. Bet only what you can afford to lose.</div>`;
+  }
+
+  document.getElementById('picksBtn').addEventListener('click', openPicks);
+  document.getElementById('pkClose').addEventListener('click', closePicks);
+  P.scrim.addEventListener('click', () => { if (picks.open) closePicks(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && picks.open && !calc.open) { e.preventDefault(); closePicks(); } });
 
   els.board.addEventListener('click', (e) => { const b = e.target.closest('.propsbtn'); if (b) openProps(b.dataset.ev); });
   P.markets.addEventListener('click', (e) => {
