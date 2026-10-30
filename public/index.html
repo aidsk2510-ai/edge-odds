@@ -263,7 +263,9 @@
   .askbox button:disabled { opacity: 0.4; }
   .askfine { padding: 0 20px 12px; font-size: 11px; color: var(--faint); background: var(--bg); }
 
-  .askfab { position: fixed; right: 20px; bottom: 20px; z-index: 30; border: 0; border-radius: 999px; padding: 12px 18px; background: var(--accent); color: var(--accent-ink); font-weight: 800; font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.45); display: inline-flex; gap: 8px; align-items: center; }
+  .fabs { position: fixed; right: 20px; bottom: 20px; z-index: 30; display: flex; gap: 10px; align-items: center; }
+  body.locked .fabs { display: none; }
+  .askfab { border: 0; border-radius: 999px; padding: 12px 18px; background: var(--accent); color: var(--accent-ink); font-weight: 800; font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.45); display: inline-flex; gap: 8px; align-items: center; }
   .askfab:hover { transform: translateY(-1px); }
   body.locked .askfab { display: none; }
 
@@ -275,6 +277,48 @@
   .tstat .r { color: var(--faint); font-weight: 500; }
   .tstat .good .v { color: var(--up); } .tstat .bad .v { color: var(--down); }
   .tstat .lbl { background: var(--panel-2); color: var(--faint); font-family: 'Inter Tight', sans-serif; font-size: 10px; letter-spacing: 0.06em; }
+
+  /* Bet slip */
+  .px[data-leg] { cursor: pointer; }
+  .px[data-leg]:hover { box-shadow: inset 0 0 0 1px var(--faint); }
+  td.sel.inslip { box-shadow: inset 3px 0 0 var(--accent); }
+  td.sel.inslip::after { content: 'In slip'; margin-left: 8px; font: 700 10px 'Inter Tight', sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent-ink); background: var(--accent); padding: 2px 6px; border-radius: 4px; vertical-align: 2px; }
+  .px.picked { box-shadow: inset 0 0 0 2px var(--text) !important; position: relative; }
+  .px.picked::after { content: '✓'; position: absolute; top: -6px; right: -6px; width: 15px; height: 15px; border-radius: 50%; background: var(--text); color: var(--bg); font: 800 10px/15px 'Inter Tight', sans-serif; text-align: center; }
+  .slipfab { border: 1px solid var(--line); border-radius: 999px; padding: 12px 16px; background: var(--panel-2); color: var(--text); font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.45); display: inline-flex; gap: 8px; align-items: center; }
+  .slipfab b { font-weight: 700; }
+  .slipfab .o { font-family: var(--mono); color: var(--accent); }
+  .slipfab[hidden] { display: none; }
+  .slipfab.bump { animation: bump 0.35s ease; }
+  @keyframes bump { 50% { transform: scale(1.08); } }
+  aside.drawer.slip { width: min(560px, 100vw); }
+  .legs2 { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .leg { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 12px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line-soft); }
+  .leg:first-child { border-top: 0; }
+  .leg b { font-size: 14px; }
+  .leg small { grid-column: 1 / 2; color: var(--muted); font-size: 12px; }
+  .leg .lp { text-align: right; font-family: var(--mono); font-size: 13px; }
+  .leg .lp small { display: block; color: var(--faint); font-family: 'Inter Tight', sans-serif; font-size: 11px; }
+  .leg .rm { border: 1px solid var(--line); background: var(--panel); color: var(--muted); border-radius: 7px; width: 26px; height: 26px; grid-row: 1 / 3; grid-column: 3; }
+  .leg .rm:hover { color: var(--down); border-color: var(--down); }
+  .leg.gone { opacity: 0.5; }
+  .quote { margin-top: 14px; border: 1px solid rgba(198, 244, 50, 0.4); background: linear-gradient(180deg, rgba(198, 244, 50, 0.07), transparent); border-radius: 12px; padding: 14px 16px; }
+  .quote .big { font: 800 26px var(--mono); color: var(--accent); }
+  .quote .big small { font: 600 13px 'Inter Tight', sans-serif; color: var(--muted); margin-left: 6px; }
+  .quote .ret { font-size: 15px; margin-top: 2px; }
+  .quote .ret b { font-family: var(--mono); }
+  .quote .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .booksq { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .bq { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; padding: 9px 12px; border-top: 1px solid var(--line-soft); align-items: center; font-size: 13px; }
+  .bq:first-child { border-top: 0; }
+  .bq .o { font-family: var(--mono); font-weight: 700; }
+  .bq .r { font-family: var(--mono); color: var(--muted); min-width: 84px; text-align: right; }
+  .bq.top { background: rgba(198, 244, 50, 0.06); }
+  .bq .tag { margin-left: 6px; }
+  .slipactions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  .slipactions button { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 8px; padding: 8px 12px; font-size: 13px; font-weight: 600; }
+  .slipactions button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .warnbox { margin-top: 12px; font-size: 12px; color: #f3d79b; background: rgba(245, 185, 66, 0.08); border: 1px solid rgba(245, 185, 66, 0.25); border-radius: 8px; padding: 8px 10px; line-height: 1.5; }
 
   /* Player props */
   .propsbtn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 3px 9px; font-size: 12px; font-weight: 600; }
@@ -364,7 +408,12 @@
   </div>
 </main>
 
-<button class="askfab" id="askFab" aria-label="Ask Edge"><span>💬</span> Ask Edge</button>
+<div class="fabs"><button class="slipfab" id="slipFab" hidden><span>🧾</span> <b id="slipFabText">Parlay</b></button><button class="askfab" id="askFab" aria-label="Ask Edge"><span>💬</span> Ask Edge</button></div>
+<aside class="drawer slip" id="slipDrawer" aria-hidden="true" aria-label="Your parlay">
+  <div class="dhead"><div class="dtitle"><h2 id="slipTitle">🧾 Your parlay</h2><button class="x" id="slipClose" aria-label="Close">×</button></div>
+    <div class="status" id="slipStatus" style="font-size:12px"></div></div>
+  <div class="dbody" id="slipBody"></div>
+</aside>
 <div class="scrim" id="scrim"></div>
 <div class="scrim calc" id="cScrim"></div>
 <aside class="drawer picks" id="picksDrawer" aria-hidden="true" aria-label="Edge Picks">
@@ -698,6 +747,13 @@
       countdown = state.refreshing ? 3 : REFRESH_S;
       // Only redraw the board when something actually changed; otherwise just update the timestamp.
       const sig = `${state.sport}|${state.market}|${state.demo}|${JSON.stringify(state.events)}`;
+      for (const l of slip.legs) {
+        if (l.k !== 'g' || l.sport !== state.sport || l.m !== state.market || state.demo !== Boolean(l.demo)) continue;
+        const ev = state.events.find((x) => x.id === l.ev);
+        const fresh = ev ? priceLeg(l, ev) : null;
+        if (fresh && Object.keys(fresh.offers).length) Object.assign(l, fresh, { at: Date.now(), gone: false });
+      }
+      if (slip.legs.length) { saveSlip(); updateSlipUI(); }
       if (sig === state.lastSig) {
         updateStatus();
       } else {
@@ -877,7 +933,8 @@
       rows.forEach((row, i) => {
         const { best, bestBook } = bests[i];
         const teamEpa = ev.epa && (row.name === ev.home_team ? ev.epa.home : row.name === ev.away_team ? ev.epa.away : null);
-        html += `<tr><td class="sel">${esc(row.label)}${teamEpa ? statChip(teamEpa, ev.epa) : ''}</td><td class="bestcol">${best ? `<div class="bestcell"><span class="px">${best.point != null ? `<span class="pt">${fmtPoint(best.point, state.market)}</span>` : ''}${fmtPrice(best.price)}</span><small>${esc(BOOKS[bestBook.key]?.[0] || bestBook.title)}</small></div>` : '<span class="px none">—</span>'}</td>`;
+        const bestLeg = best ? { k: 'g', sport: state.sport, ev: ev.id, m: state.market, n: row.name, p: best.point ?? null } : null;
+        html += `<tr><td class="sel ${slipHas(bestLeg) ? 'inslip' : ''}">${esc(row.label)}${teamEpa ? statChip(teamEpa, ev.epa) : ''}</td><td class="bestcol">${best ? `<div class="bestcell"><span class="px ${slipHas(bestLeg) ? 'picked' : ''}" ${legAttr(bestLeg)}>${best.point != null ? `<span class="pt">${fmtPoint(best.point, state.market)}</span>` : ''}${fmtPrice(best.price)}</span><small>${esc(BOOKS[bestBook.key]?.[0] || bestBook.title)}</small></div>` : '<span class="px none">—</span>'}</td>`;
         for (const b of books) {
           const bm = ev.bookmakers.find((x) => x.key === b.key);
           const o = bm?.markets[0].outcomes.find((x) => x.name === row.name);
@@ -889,7 +946,8 @@
           let move = '';
           if (was && was.sig !== sig) move = o.price > was.price ? 'up' : o.price < was.price ? 'down' : '';
           const isBest = best && o.price === best.price && (o.point ?? null) === (best.point ?? null);
-          html += `<td><span class="px ${isBest ? 'best' : ''} ${move}">${o.point != null ? `<span class="pt">${fmtPoint(o.point, state.market)}</span>` : ''}<span>${fmtPrice(o.price)}${move ? `<span class="arrow ${move}">${move === 'up' ? '▲' : '▼'}</span>` : ''}</span></span></td>`;
+          const leg = { k: 'g', sport: state.sport, ev: ev.id, m: state.market, n: row.name, p: o.point ?? null };
+          html += `<td><span class="px ${isBest ? 'best' : ''} ${move}" ${legAttr(leg)}>${o.point != null ? `<span class="pt">${fmtPoint(o.point, state.market)}</span>` : ''}<span>${fmtPrice(o.price)}${move ? `<span class="arrow ${move}">${move === 'up' ? '▲' : '▼'}</span>` : ''}</span></span></td>`;
         }
         html += `</tr>`;
       });
@@ -898,6 +956,7 @@
     // Keep prev map scoped to current sport/market
     state.prev = nextPrev;
     els.board.innerHTML = html;
+    if (typeof markPicked === 'function' && slip.legs.length) markPicked();
   }
 
   // ---------- Arbitrage calculator ----------
@@ -1141,7 +1200,8 @@
         let best = null, bestBook = null;
         for (const [bk, o] of byBook) if (!state.hiddenBooks.has(bk) && better(o, best, mkt, side)) { best = o; bestBook = bk; }
         const pt = (o) => (o.point != null ? `<span class="pt">${side === 'Over' ? 'O' : side === 'Under' ? 'U' : ''} ${o.point}</span>` : '');
-        html += `<tr class="${idx ? 'p2' : 'pfirst'}"><td class="sel">${idx ? '' : esc(who)}<span class="side">${esc(side)}</span></td><td class="bestcol">${best ? `<div class="bestcell"><span class="px">${pt(best)}${fmtPrice(best.price)}</span><small>${esc(BOOKS[bestBook]?.[0] || bestBook)}</small></div>` : '<span class="px none">—</span>'}</td>`;
+        const pLeg = (o) => ({ k: 'p', sport: props.sport, ev: props.ev.id, m: props.market, n: side, d: who, p: o.point ?? null });
+        html += `<tr class="${idx ? 'p2' : 'pfirst'}"><td class="sel">${idx ? '' : esc(who)}<span class="side">${esc(side)}</span></td><td class="bestcol">${best ? `<div class="bestcell"><span class="px ${slipHas(pLeg(best)) ? 'picked' : ''}" ${legAttr(pLeg(best))}>${pt(best)}${fmtPrice(best.price)}</span><small>${esc(BOOKS[bestBook]?.[0] || bestBook)}</small></div>` : '<span class="px none">—</span>'}</td>`;
         for (const b of books) {
           const o = byBook.get(b.key);
           if (!o) { html += `<td><span class="px none">—</span></td>`; continue; }
@@ -1150,13 +1210,14 @@
           const was = props.prev.get(key);
           const move = was && was.sig !== sig ? (o.price > was.price ? 'up' : o.price < was.price ? 'down' : '') : '';
           const isBest = best && o.price === best.price && (o.point ?? null) === (best.point ?? null);
-          html += `<td><span class="px ${isBest ? 'best' : ''} ${move}">${pt(o)}<span>${fmtPrice(o.price)}${move ? `<span class="arrow ${move}">${move === 'up' ? '▲' : '▼'}</span>` : ''}</span></span></td>`;
+          html += `<td><span class="px ${isBest ? 'best' : ''} ${move}" ${legAttr(pLeg(o))}>${pt(o)}<span>${fmtPrice(o.price)}${move ? `<span class="arrow ${move}">${move === 'up' ? '▲' : '▼'}</span>` : ''}</span></span></td>`;
         }
         html += `</tr>`;
       });
     }
     P.board.innerHTML = html + `</tbody></table>`;
     props.prev = nextPrev;
+    if (slip.legs.length) markPicked();
   }
 
   // ---------- Edge Picks ----------
@@ -1344,6 +1405,229 @@
   document.getElementById('pClose').addEventListener('click', closeProps);
   P.scrim.addEventListener('click', closeProps);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && props.open && !e.defaultPrevented) closeProps(); });
+
+  // ---------- Bet slip / parlay builder ----------
+  // Tap any price to add it. Each leg remembers which game, bet type, side and line it is, plus every
+  // sportsbook's price for that exact line. The slip prices the parlay at every book that offers ALL the legs.
+  const OFFSHORE = new Set(['bovada', 'betonlineag', 'mybookieag', 'betus', 'lowvig']);
+  const PROP_NAMES = Object.fromEntries(Object.values(PROPS).flat());
+  const SL = { drawer: document.getElementById('slipDrawer'), body: document.getElementById('slipBody'), status: document.getElementById('slipStatus'), title: document.getElementById('slipTitle'), fab: document.getElementById('slipFab'), fabText: document.getElementById('slipFabText') };
+  const slip = (() => { try { const v = JSON.parse(store?.getItem('edge.slip') || 'null'); if (v && Array.isArray(v.legs)) return { legs: v.legs, stake: v.stake || 10, open: false, timer: null }; } catch {} return { legs: [], stake: 10, open: false, timer: null }; })();
+  const saveSlip = () => { try { store?.setItem('edge.slip', JSON.stringify({ legs: slip.legs, stake: slip.stake })); } catch {} };
+  function legKey(l) { return [l.sport, l.ev, l.m, l.n, l.d || '', l.p ?? ''].join('|'); }
+  function legSlot(l) { return [l.sport, l.ev, l.m, l.d || ''].join('|'); } // one pick per game + bet type (+ player)
+  function slipHas(l) { return Boolean(l) && slip.legs.some((x) => x.key === legKey(l)); }
+  function legAttr(l) { return l ? `data-leg="${esc(JSON.stringify(l))}"` : ''; }
+
+  // Prices for one leg from an event's data: every book's price at this exact line, plus its fair chance
+  // (each book's price with its cut removed, averaged across books).
+  function priceLeg(l, ev) {
+    const offers = {}, titles = {}, fairs = [];
+    for (const b of ev?.bookmakers || []) {
+      const m = (b.markets || []).find((x) => x.key === l.m);
+      if (!m) continue;
+      const o = m.outcomes.find((x) => x.name === l.n && (x.point ?? null) === (l.p ?? null) && (!l.d || x.description === l.d));
+      if (!o) continue;
+      offers[b.key] = o.price; titles[b.key] = BOOKS[b.key]?.[0] || b.title;
+      const group = l.k === 'p' ? m.outcomes.filter((x) => x.description === l.d && (x.point ?? null) === (l.p ?? null)) : m.outcomes;
+      if (group.length >= 2) fairs.push((1 / o.price) / group.reduce((a, x) => a + 1 / x.price, 0));
+    }
+    return { offers, titles, fair: fairs.length ? fairs.reduce((a, b) => a + b, 0) / fairs.length : null };
+  }
+  function legLabel(l) {
+    if (l.k === 'p') return `${l.d} ${l.n === 'Yes' ? '' : l.n + ' '}${l.p ?? ''} ${PROP_NAMES[l.m] || ''}`.replace(/\s+/g, ' ').trim();
+    if (l.m === 'h2h') return l.n === 'Draw' ? 'Draw' : `${l.n} to win`;
+    if (l.m === 'spreads') return `${l.n} ${fmtPoint(l.p, 'spreads')}`;
+    return `${l.n} ${l.p}`;
+  }
+  function makeLeg(l, ev) {
+    const pr = priceLeg(l, ev);
+    if (!Object.keys(pr.offers).length) return null;
+    const sp = sportOf(l.sport);
+    const game = sp.kind === 'soccer' ? `${ev.home_team} vs ${ev.away_team}` : `${ev.away_team} @ ${ev.home_team}`;
+    return { ...l, key: legKey(l), slot: legSlot(l), label: legLabel(l), game, start: ev.commence_time, sportLabel: sp.label, ...pr, at: Date.now(), gone: false, demo: state.demo };
+  }
+
+  function toggleLeg(l, sourceEvent) {
+    const key = legKey(l);
+    const i = slip.legs.findIndex((x) => x.key === key);
+    if (i >= 0) slip.legs.splice(i, 1);
+    else {
+      const leg = makeLeg(l, sourceEvent);
+      if (!leg) return;
+      slip.legs = slip.legs.filter((x) => x.slot !== leg.slot); // picking the other side replaces the old pick
+      if (slip.legs.length >= 12) { alertSlip('A parlay can have up to 12 legs.'); return; }
+      slip.legs.push(leg);
+      SL.fab.classList.remove('bump'); void SL.fab.offsetWidth; SL.fab.classList.add('bump');
+    }
+    saveSlip(); updateSlipUI(); markPicked();
+  }
+  // Show each pick once: a check on its Best price and a highlighted team/player name.
+  function markPicked() {
+    document.querySelectorAll('.bestcell .px[data-leg]').forEach((el) => {
+      let on = false; try { on = slipHas(JSON.parse(el.dataset.leg)); } catch {}
+      el.classList.toggle('picked', on);
+      el.closest('tr')?.querySelector('td.sel')?.classList.toggle('inslip', on);
+    });
+    document.querySelectorAll('td:not(.bestcol) > .px[data-leg]').forEach((el) => {
+      let on = false; try { on = slipHas(JSON.parse(el.dataset.leg)); } catch {}
+      if (on) el.closest('tr')?.querySelector('td.sel')?.classList.add('inslip');
+    });
+  }
+  let alertTimer = null;
+  function alertSlip(msg) { SL.fabText.textContent = msg; clearTimeout(alertTimer); alertTimer = setTimeout(updateSlipUI, 2500); }
+
+  // Price the whole parlay at every book that offers every leg.
+  function quote() {
+    const legs = slip.legs.filter((l) => !l.gone);
+    if (!legs.length) return null;
+    const books = Object.keys(legs[0].offers).filter((k) => legs.every((l) => l.offers[k]));
+    const titleOf = (k) => legs.map((l) => l.titles[k]).find(Boolean) || BOOKS[k]?.[0] || k;
+    const options = books.map((k) => ({ k, title: titleOf(k), dec: legs.reduce((p, l) => p * l.offers[k], 1), offshore: OFFSHORE.has(k) })).sort((a, b) => b.dec - a.dec);
+    const known = legs.every((l) => l.fair != null);
+    const hit = known ? legs.reduce((p, l) => p * l.fair, 1) : null;
+    const games = new Map();
+    for (const l of legs) games.set(`${l.sport}|${l.ev}`, (games.get(`${l.sport}|${l.ev}`) || 0) + 1);
+    const sameGame = [...games.values()].some((n) => n > 1);
+    const bestLicensed = options.find((o) => !o.offshore) || null;
+    return { legs, options, hit, sameGame, best: bestLicensed || options[0] || null };
+  }
+  const amOdds = (dec) => { const a = toAmerican(dec); return state.format === 'decimal' ? dec.toFixed(2) : (a > 0 ? '+' : '') + a; };
+  const money2 = (x) => '$' + x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  function updateSlipUI() {
+    const n = slip.legs.length;
+    SL.fab.hidden = n === 0;
+    if (n) {
+      const q = quote();
+      SL.fabText.innerHTML = `${n === 1 ? '1 pick' : `Parlay · ${n} legs`}${q?.best ? ` <span class="o">${esc(amOdds(q.best.dec))}</span>` : ''}`;
+    }
+    if (slip.open) renderSlip();
+  }
+
+  function renderSlip() {
+    const q = quote();
+    const n = slip.legs.length;
+    SL.title.textContent = n > 1 ? `🧾 Your parlay · ${n} legs` : '🧾 Your bet slip';
+    const oldest = slip.legs.reduce((m, l) => Math.min(m, l.at || Date.now()), Date.now());
+    SL.status.textContent = n ? `Prices as of ${new Date(oldest).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · updates every minute while open` : '';
+    if (!n) { SL.body.innerHTML = '<div class="empty"><b>Your slip is empty</b>Tap any price on the board (or in player props) to add it. Tap it again to remove it.</div>'; return; }
+    const pct = (x) => `${(x * 100).toFixed(1)}%`;
+    const legsHtml = slip.legs.map((l) => {
+      const bestK = Object.keys(l.offers).filter((k) => !OFFSHORE.has(k)).sort((a, b) => l.offers[b] - l.offers[a])[0] || Object.keys(l.offers)[0];
+      const live = new Date(l.start).getTime() <= Date.now();
+      return `<div class="leg ${l.gone ? 'gone' : ''}"><b>${esc(l.label)}</b>
+        <div class="lp">${bestK ? esc(amOdds(l.offers[bestK])) : '—'}<small>${bestK ? 'best: ' + esc(l.titles[bestK] || bestK) : ''}</small></div>
+        <button class="rm" data-rm="${esc(l.key)}" aria-label="Remove">×</button>
+        <small>${esc(l.sportLabel)} · ${esc(l.game)} · ${live ? 'LIVE' : esc(timeFmt.format(new Date(l.start)))}${l.fair != null ? ` · wins ${pct(l.fair)}` : ''}${l.gone ? ' · no longer available' : ''}</small></div>`;
+    }).join('');
+    let quoteHtml = '';
+    if (q && q.options.length) {
+      const b = q.best, stake = Number(slip.stake) || 0;
+      const edge = q.hit != null ? q.hit * b.dec - 1 : null;
+      quoteHtml = `<div class="quote">
+          <div class="big">${esc(amOdds(b.dec))}<small>at ${esc(b.title)}${b.offshore ? ' (offshore)' : ''}</small></div>
+          <div class="ret">${money2(stake)} returns <b>${money2(stake * b.dec)}</b> <span style="color:var(--muted)">(profit ${money2(stake * (b.dec - 1))})</span></div>
+          <div class="meta">${q.hit != null ? `<span class="tag">hits ${pct(q.hit)} · about 1 in ${Math.max(1, Math.round(1 / q.hit))}</span>${edgeTag(edge)}` : '<span class="tag">chance unknown for a leg</span>'}${q.legs.length > 1 ? `<span class="tag">${q.options.length} book${q.options.length === 1 ? '' : 's'} offer every leg</span>` : ''}</div>
+        </div>
+        <div class="booksq">${q.options.slice(0, 10).map((o, i) => `<div class="bq ${o === b ? 'top' : ''}"><span>${o === b ? '★ ' : ''}${esc(o.title)}${o.offshore ? '<span class="tag">offshore</span>' : ''}</span><span class="o">${esc(amOdds(o.dec))}</span><span class="r">${money2(stake * o.dec)}</span></div>`).join('')}</div>`;
+    } else if (q) {
+      quoteHtml = '<div class="warnbox">No single sportsbook offers every one of these legs at these exact lines, so this can’t be placed as one parlay. Try removing a leg, or pick a line more books offer.</div>';
+    }
+    const warns = [];
+    if (q?.sameGame) warns.push('Some legs are from the same game. Many sportsbooks only allow that as a "same-game parlay," which they price lower than shown here.');
+    if (slip.legs.some((l) => l.gone)) warns.push('A leg is no longer on the board (the game may have started or the line was taken down). It is left out of the price.');
+    if (q?.best?.offshore) warns.push('The best price here is at an offshore sportsbook that isn’t licensed in US states.');
+    SL.body.innerHTML = `<div class="legs2">${legsHtml}</div>
+      <div class="field" style="margin-top:14px"><label for="slipStake">Bet amount</label>
+        <div class="stakebox"><div class="money"><span>$</span><input id="slipStake" type="number" inputmode="decimal" min="0" step="any" value="${esc(String(slip.stake))}"></div>
+        <div class="presets" id="slipPresets"><button data-v="10">$10</button><button data-v="25">$25</button><button data-v="50">$50</button><button data-v="100">$100</button></div></div></div>
+      ${quoteHtml}${warns.map((w) => `<div class="warnbox">${esc(w)}</div>`).join('')}
+      <div class="slipactions"><button class="primary" id="slipAsk">💬 Ask Edge about this</button><button id="slipClear">Clear all</button></div>
+      <div class="pfoot">Prices move fast. Check them at the sportsbook before betting. "Hits" uses each leg’s fair chance and assumes the games don’t affect each other. Bet only what you can afford to lose.</div>`;
+  }
+
+  // Keep leg prices fresh: re-read each leg's game from the server (uses the site's cache, no extra cost when warm).
+  async function refreshSlip() {
+    if (!slip.legs.length) return;
+    const groups = new Map();
+    for (const l of slip.legs) {
+      const g = l.k === 'p' ? `p|${l.sport}|${l.ev}|${l.m}` : `g|${l.sport}|${l.m}`;
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(l);
+    }
+    await Promise.all([...groups.entries()].map(async ([g, legs]) => {
+      const [kind, sport, a, b] = g.split('|');
+      let events = [];
+      try {
+        if (state.demo) {
+          events = kind === 'g' ? Demo.generate(sport, a).events : [];
+          if (kind === 'p') { const base = Demo.generate(sport, 'h2h').events.find((e) => e.id === a); if (base) events = [Demo.props(sport, base, b)]; }
+        } else if (kind === 'g') {
+          const r = await fetch(`/api/odds?sport=${encodeURIComponent(sport)}&market=${a}`, { cache: 'no-store' });
+          events = (await r.json()).events || [];
+        } else {
+          const r = await fetch(`/api/props?sport=${encodeURIComponent(sport)}&event=${encodeURIComponent(a)}&market=${b}`, { cache: 'no-store' });
+          const body = await r.json(); events = body.event ? [body.event] : [];
+        }
+      } catch { return; }
+      for (const l of legs) {
+        const ev = events.find((e) => e.id === l.ev);
+        const fresh = ev ? priceLeg(l, ev) : null;
+        if (fresh && Object.keys(fresh.offers).length) Object.assign(l, fresh, { at: Date.now(), gone: false });
+        else if (events.length) l.gone = true;
+      }
+    }));
+    saveSlip(); updateSlipUI();
+  }
+
+  function openSlip() {
+    slip.open = true;
+    SL.drawer.classList.add('open'); P.scrim.classList.add('open'); SL.drawer.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('locked');
+    renderSlip(); refreshSlip();
+    clearInterval(slip.timer); slip.timer = setInterval(() => { if (!document.hidden) refreshSlip(); }, 60000);
+  }
+  function closeSlip() {
+    slip.open = false; clearInterval(slip.timer);
+    SL.drawer.classList.remove('open'); SL.drawer.setAttribute('aria-hidden', 'true');
+    if (!props.open && !picks.open) { P.scrim.classList.remove('open'); document.body.classList.remove('locked'); }
+  }
+
+  els.board.addEventListener('click', (e) => {
+    const el = e.target.closest('.px[data-leg]'); if (!el) return;
+    const l = JSON.parse(el.dataset.leg);
+    toggleLeg(l, state.events.find((x) => x.id === l.ev));
+  });
+  P.board.addEventListener('click', (e) => {
+    const el = e.target.closest('.px[data-leg]'); if (!el) return;
+    toggleLeg(JSON.parse(el.dataset.leg), props.data);
+  });
+  SL.fab.addEventListener('click', openSlip);
+  document.getElementById('slipClose').addEventListener('click', closeSlip);
+  P.scrim.addEventListener('click', () => { if (slip.open) closeSlip(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && slip.open && !calc.open) { e.preventDefault(); closeSlip(); } });
+  SL.body.addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-rm]');
+    if (rm) { slip.legs = slip.legs.filter((l) => l.key !== rm.dataset.rm); saveSlip(); updateSlipUI(); markPicked(); return; }
+    const pre = e.target.closest('#slipPresets button');
+    if (pre) { slip.stake = Number(pre.dataset.v); saveSlip(); renderSlip(); return; }
+    if (e.target.closest('#slipClear')) { slip.legs = []; saveSlip(); updateSlipUI(); markPicked(); return; }
+    if (e.target.closest('#slipAsk')) {
+      const text = `Is this a good parlay? ${slip.legs.map((l) => `${l.label} (${l.sportLabel}, ${l.game})`).join('; ')}. I'm betting $${slip.stake}.`;
+      closeSlip(); ask.tab = 'ask'; openPicks(); A.input.value = text; autosize(); A.input.focus();
+    }
+  });
+  SL.body.addEventListener('input', (e) => {
+    if (e.target.id !== 'slipStake') return;
+    slip.stake = Math.max(0, Number(e.target.value) || 0); saveSlip();
+    const q = quote(); if (!q?.best) return;
+    // Update the numbers in place so typing isn't interrupted
+    const ret = SL.body.querySelector('.quote .ret');
+    if (ret) ret.innerHTML = `${money2(slip.stake)} returns <b>${money2(slip.stake * q.best.dec)}</b> <span style="color:var(--muted)">(profit ${money2(slip.stake * (q.best.dec - 1))})</span>`;
+    SL.body.querySelectorAll('.bq').forEach((row, i) => { const o = q.options[i]; if (o) row.querySelector('.r').textContent = money2(slip.stake * o.dec); });
+  });
+  updateSlipUI();
 
   // ---------- Events ----------
   function bindSeg(id, key, after) {
