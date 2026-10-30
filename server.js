@@ -11,11 +11,13 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { INDOOR_SPORTS, venueFor, placeGuesses, normalize as teamKey } from './venues.js';
 // Optional features load separately, so a missing file switches that feature off instead of crashing the site.
-let loadNflEpa = null, loadCfbEpa = null, loadNbaRatings = null, indexTeams = null, loadNflInjuries = null, loadEspnInjuries = null;
-try { ({ loadNflEpa, loadCfbEpa, loadNbaRatings, indexTeams, loadNflInjuries, loadEspnInjuries } = await import('./stats.js')); }
+let loadNflEpa = null, loadCfbEpa = null, loadNbaRatings = null, indexTeams = null, loadNflInjuries = null, loadEspnInjuries = null, loadNbaPlayers = null;
+try { ({ loadNflEpa, loadCfbEpa, loadNbaRatings, indexTeams, loadNflInjuries, loadEspnInjuries, loadNbaPlayers } = await import('./stats.js')); }
 catch (e) { console.error(`[startup] Team EPA is off: couldn't load stats.js (${e.message}). Upload stats.js to the main folder.`); }
 try { await import('./public/picks-engine.js'); } // defines globalThis.EdgePicks (also used by the page)
 catch (e) { console.error(`[startup] Edge Picks is off: couldn't load public/picks-engine.js (${e.message}). Upload it into the public folder.`); }
+try { await import('./public/fantasy-engine.js'); } // defines globalThis.EdgeFantasy (also used by fantasy.html)
+catch (e) { console.error(`[startup] Fantasy trade takes are off: couldn't load public/fantasy-engine.js (${e.message}). Upload it into the public folder.`); }
 
 const ROOT = fileURLToPath(new URL('./public/', import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -715,6 +717,53 @@ How to answer:
 - Stay on sports betting and this site. Politely decline unrelated requests.`;
 }
 
+// ---------- Fantasy NBA ----------
+// Player stats from sportsdataverse box scores (free, no key), injuries from ESPN. No odds credits used.
+const nameKey = (n) => String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b/g, '').replace(/[^a-z]/g, '');
+async function fantasyNba() {
+  if (!loadNbaPlayers) throw new Error('stats.js missing');
+  return cached('fantasy:nba', (b) => (b ? 3 * 3600e3 : 5 * 60e3), async () => {
+    const [data, inj] = await Promise.all([
+      loadNbaPlayers(),
+      loadEspnInjuries ? soon(cached('inj-raw:nba', (b) => (b ? 30 * 60e3 : 10 * 60e3), () => loadEspnInjuries('basketball/nba').catch((e) => { console.warn(`[injuries] NBA: ${e.message}`); return null; })), 4000) : null,
+    ]);
+    const injBy = new Map();
+    for (const t of inj?.teams || []) for (const x of t.players) injBy.set(nameKey(x.player), { status: x.status, injury: x.injury, returns: x.returns, note: x.note });
+    // Keep anyone who has played this season, plus last season's real rotation players.
+    data.players = data.players.filter((p) => p.cur.gp > 0 || p.prev.min >= 300);
+    for (const p of data.players) p.inj = injBy.get(nameKey(p.name)) || null;
+    data.injuries = inj ? { source: inj.source, updated: inj.updated, matched: data.players.filter((p) => p.inj).length } : null;
+    data.updated = new Date().toISOString();
+    return data;
+  });
+}
+
+const TAKE_SYSTEM = `You are Edge, a fantasy basketball analyst. You get a trade that our model has already scored. Write a short, plain-English take (90-160 words) for a casual fantasy player.
+Rules: Use only the numbers given; don't invent stats, injuries or news. Say who wins the trade and why, in terms of the biggest drivers (value per game, games left/injuries, category changes or points per game, role/minutes/usage trends, roster spots). Mention one real risk. If the format is 9-cat, mention which categories they gain and lose and whether that suits a punt build. Speak to the user as "you". No headings, no bullet lists, no tables. Don't promise outcomes.`;
+
+async function tradeTake(trade, opts) {
+  const data = await fantasyNba();
+  const e = globalThis.EdgeFantasy.evaluate(data, trade, opts);
+  if (!e.give.length || !e.get.length) throw Object.assign(new Error('incomplete'), { status: 400 });
+  const r1 = (v) => (v == null ? null : Math.round(v * 10) / 10);
+  const who = (x) => ({
+    name: x.name, team: x.team, pos: x.pos, overallRank: x.rank, valuePerGame: r1(x.per), overWaiverPerGame: r1(x.perOverRepl), gamesLeftExpected: Math.round(x.games), restOfSeasonValue: r1(x.rest),
+    injury: x.inj ? `${x.inj.status}${x.inj.injury ? ' - ' + x.inj.injury : ''}${x.inj.returns ? ', back ' + x.inj.returns : ''}` : null,
+    mpg: r1(x.ctx.line?.min), usage: r1(x.ctx.line?.usg), ts: x.ctx.line?.ts != null ? Math.round(x.ctx.line.ts * 1000) / 10 : null, role: x.ctx.role,
+    teamMinutesRank: x.ctx.minRank, teamUsageRank: x.ctx.usgRank, minutesTrend: r1(x.ctx.minTrend), usageTrendVsLastSeason: r1(x.ctx.usgTrend), teammatesOut: x.ctx.matesOut.map((m) => m.name), gamesThisSeason: x.sample,
+  });
+  const summary = {
+    format: e.format === 'points' ? 'points league' : `9-cat${e.punt.length ? ' punting ' + e.punt.join(', ') : ''}`, statsUsed: e.mode, league: `${e.teams} teams, ${e.roster} roster spots`,
+    verdict: e.verdict, restOfSeasonValueIn: r1(e.restIn), restOfSeasonValueOut: r1(e.restOut), youGet: e.get.map(who), youGive: e.give.map(who),
+    categoryChangePerGame: e.cats ? Object.fromEntries(Object.entries(e.cats).map(([k, v]) => [k, Math.round(v * 100) / 100])) : null,
+    fantasyPointsChange: e.fpChange ? { perGame: r1(e.fpChange.perGame), restOfSeason: Math.round(e.fpChange.rest) } : null, notes: e.flags,
+  };
+  const out = await claude({ model: ASK_MODEL, max_tokens: 500, system: TAKE_SYSTEM, messages: [{ role: 'user', content: JSON.stringify(summary) }] });
+  const text = (out.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+  console.log(`[fantasy] trade take: ${out.usage?.input_tokens || 0} in / ${out.usage?.output_tokens || 0} out tokens`);
+  return { text, model: ASK_MODEL };
+}
+
 async function claude(body) {
   const res = await fetch(`${AI_BASE}/v1/messages`, {
     method: 'POST',
@@ -800,6 +849,28 @@ async function handleApi(req, res, url) {
     return sendJSON(res, 200, { ...pub, events, refreshing }); // no browser caching: the server cache handles load
   }
 
+  if (url.pathname === '/api/fantasy/nba') {
+    try { return sendJSON(res, 200, await fantasyNba()); }
+    catch (e) { console.warn(`[fantasy] NBA load failed: ${e.message}`); return sendJSON(res, 502, { error: 'stats_unavailable' }); }
+  }
+  if (url.pathname === '/api/fantasy/take') {
+    if (req.method !== 'POST') return sendJSON(res, 405, { error: 'post_only' });
+    if (!AI_KEY || !globalThis.EdgeFantasy) return sendJSON(res, 503, { error: 'ai_off' });
+    const allowed = askAllowed(req);
+    if (!allowed.ok) return sendJSON(res, 429, { error: allowed.why === 'day' ? 'daily_limit' : 'slow_down' });
+    let body;
+    try { body = await readJson(req); } catch (e) { return sendJSON(res, e.status || 400, { error: 'bad_request' }); }
+    const ids = (a) => (Array.isArray(a) ? a.slice(0, 6).map(String).filter((x) => /^\d{1,12}$/.test(x)) : []);
+    const o = body.opts || {};
+    const opts = {
+      format: o.format === 'points' ? 'points' : '9cat', mode: ['proj', 'cur', 'l14', 'prev'].includes(o.mode) ? o.mode : 'proj',
+      teams: Number(o.teams) || 12, roster: Number(o.roster) || 13,
+      punt: (Array.isArray(o.punt) ? o.punt : []).filter((c) => globalThis.EdgeFantasy.CATS.includes(c)),
+      scoring: Object.fromEntries(globalThis.EdgeFantasy.SCORE_KEYS.map((k) => [k, Math.max(-20, Math.min(20, Number(o.scoring?.[k]) || 0))])),
+    };
+    try { return sendJSON(res, 200, await tradeTake({ give: ids(body.give), get: ids(body.get) }, opts)); }
+    catch (e) { if (e.status === 400) return sendJSON(res, 400, { error: 'pick_players' }); console.warn(`[fantasy] take failed: ${e.message}`); return sendJSON(res, 502, { error: 'ai_failed' }); }
+  }
   if (url.pathname === '/api/ask') {
     if (req.method !== 'POST') return sendJSON(res, 405, { error: 'post_only' });
     if (!AI_KEY || !globalThis.EdgePicks) return sendJSON(res, 503, { error: 'ai_off' });
@@ -892,7 +963,7 @@ async function handleStatic(res, pathname) {
   if (rel.startsWith('..')) { res.writeHead(403); return res.end(); }
   try {
     let file = await readFile(join(ROOT, rel));
-    if (analyticsTag && rel === 'index.html') file = Buffer.from(file.toString('utf8').replace('</body>', `${analyticsTag}\n</body>`));
+    if (analyticsTag && (rel === 'index.html' || rel === 'fantasy.html')) file = Buffer.from(file.toString('utf8').replace('</body>', `${analyticsTag}\n</body>`));
     send(res, 200, { 'content-type': TYPES[extname(rel)] || 'application/octet-stream', 'cache-control': 'no-cache' }, file);
   } catch {
     res.writeHead(404, { 'content-type': 'text/plain' });
@@ -904,7 +975,7 @@ http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   try {
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
-    return await handleStatic(res, url.pathname === '/' ? '/index.html' : url.pathname);
+    return await handleStatic(res, url.pathname === '/' ? '/index.html' : /^\/fantasy\/?$/.test(url.pathname) ? '/fantasy.html' : url.pathname);
   } catch (e) {
     console.error(e.message);
     sendJSON(res, 502, { error: 'upstream_failed', detail: e.message });
@@ -914,4 +985,5 @@ http.createServer(async (req, res) => {
   // Start the slow loads right away so the first visitor after a restart doesn't wait for them.
   if (API_KEY) for (const sport of Object.keys(EPA_LOADERS)) epaFinder(sport);
   if (API_KEY) for (const sport of Object.keys(INJURY_LOADERS)) injuryFinder(sport);
+  if (loadNbaPlayers) fantasyNba().catch((e) => console.warn(`[fantasy] warm-up failed: ${e.message}`));
 });

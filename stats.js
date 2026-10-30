@@ -233,3 +233,86 @@ export function indexTeams(stats) {
     return null;
   };
 }
+
+// ---------- Fantasy NBA: player box scores (sportsdataverse) ----------
+// Returns per-player totals for three windows: this season, the last 14 days of it, and last season.
+const BOX_KEYS = ['min', 'fgm', 'fga', 'tpm', 'tpa', 'ftm', 'fta', 'oreb', 'reb', 'ast', 'stl', 'blk', 'tov', 'pts', 'pf', 'pm', 'gs', 'dd', 'td', 'useP', 'useT'];
+const emptyLine = () => Object.fromEntries([['gp', 0], ...BOX_KEYS.map((k) => [k, 0])]);
+
+async function readPlayerBox(season) {
+  const res = await fetch(`${SDV}/espn_nba_player_boxscores/player_box_${season}.csv`);
+  if (res.status === 404) return null; // season file not published yet
+  if (!res.ok) throw new Error(`sportsdataverse players ${res.status}`);
+  const rows = [];
+  let cols = null;
+  await streamCsv(Readable.fromWeb(res.body), (r) => {
+    if (!cols) { cols = Object.fromEntries(r.map((name, i) => [name, i])); return; }
+    if (r[cols.season_type] !== '2') return; // regular season only
+    const n = (k) => Number(r[cols[k]]) || 0;
+    const min = n('minutes');
+    if (r[cols.did_not_play] === 'true' || min <= 0) return;
+    rows.push({
+      game: r[cols.game_id], date: r[cols.game_date], id: r[cols.athlete_id], name: r[cols.athlete_display_name],
+      team: r[cols.team_abbreviation], teamName: r[cols.team_display_name], color: r[cols.team_color], pos: r[cols.athlete_position_abbreviation],
+      starter: r[cols.starter] === 'true',
+      min, fgm: n('field_goals_made'), fga: n('field_goals_attempted'), tpm: n('three_point_field_goals_made'), tpa: n('three_point_field_goals_attempted'),
+      ftm: n('free_throws_made'), fta: n('free_throws_attempted'), oreb: n('offensive_rebounds'), reb: n('rebounds'), ast: n('assists'),
+      stl: n('steals'), blk: n('blocks'), tov: n('turnovers'), pts: n('points'), pf: n('fouls'), pm: Number(String(r[cols.plus_minus]).replace('+', '')) || 0,
+    });
+  });
+  // Team totals per game, for usage rate.
+  const tg = new Map();
+  for (const x of rows) {
+    const k = x.game + '|' + x.team;
+    const t = tg.get(k) || { min: 0, use: 0 };
+    t.min += x.min; t.use += x.fga + 0.44 * x.fta + x.tov;
+    tg.set(k, t);
+  }
+  const teamGames = {};
+  for (const k of tg.keys()) { const team = k.split('|')[1]; teamGames[team] = (teamGames[team] || 0) + 1; }
+  let last = '';
+  for (const x of rows) if (x.date > last) last = x.date;
+  return { rows, tg, teamGames, last };
+}
+
+function addGame(line, x, tg) {
+  const t = tg.get(x.game + '|' + x.team);
+  line.gp++;
+  for (const k of ['min', 'fgm', 'fga', 'tpm', 'tpa', 'ftm', 'fta', 'oreb', 'reb', 'ast', 'stl', 'blk', 'tov', 'pts', 'pf', 'pm']) line[k] += x[k];
+  if (x.starter) line.gs++;
+  const tens = [x.pts, x.reb, x.ast, x.stl, x.blk].filter((v) => v >= 10).length;
+  if (tens >= 2) line.dd++;
+  if (tens >= 3) line.td++;
+  line.useP += x.fga + 0.44 * x.fta + x.tov;
+  if (t && t.min > 0) line.useT += (t.use * x.min) / (t.min / 5); // team plays used while he was on the floor
+}
+
+const round = (line) => { for (const k in line) line[k] = Math.round(line[k] * 10) / 10; return line; };
+
+export async function loadNbaPlayers(season = nbaSeason()) {
+  const [cur, prev] = await Promise.all([readPlayerBox(season), readPlayerBox(season - 1)]);
+  if (!cur && !prev) throw new Error('no NBA player box scores found');
+  const players = new Map();
+  const get = (x) => {
+    let p = players.get(x.id);
+    if (!p) players.set(x.id, (p = { id: x.id, name: x.name, team: x.team, teamName: x.teamName, color: x.color, pos: x.pos, cur: emptyLine(), l14: emptyLine(), prev: emptyLine(), _d: '' }));
+    if (x.date >= p._d) Object.assign(p, { _d: x.date, team: x.team, teamName: x.teamName, color: x.color, pos: x.pos || p.pos, name: x.name });
+    return p;
+  };
+  if (prev) for (const x of prev.rows) addGame(get(x).prev, x, prev.tg);
+  let cutoff = '';
+  if (cur) {
+    const d = new Date(cur.last + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - 13);
+    cutoff = d.toISOString().slice(0, 10);
+    for (const x of cur.rows) { const p = get(x); addGame(p.cur, x, cur.tg); if (x.date >= cutoff) addGame(p.l14, x, cur.tg); }
+  }
+  const out = [...players.values()].map(({ _d, ...p }) => ({ ...p, lastGame: _d, cur: round(p.cur), l14: round(p.l14), prev: round(p.prev) }));
+  const fmt = (d) => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const teams = {};
+  for (const p of out) teams[p.team] ||= { abbr: p.team, name: p.teamName, color: p.color, gp: cur?.teamGames[p.team] || 0 };
+  return {
+    season: `${season - 1}-${String(season).slice(2)}`, prevSeason: `${season - 2}-${String(season - 1).slice(2)}`,
+    through: cur?.last ? fmt(cur.last) : null, l14From: cutoff ? fmt(cutoff) : null,
+    hasCurrent: Boolean(cur?.rows.length), teams, players: out,
+  };
+}
