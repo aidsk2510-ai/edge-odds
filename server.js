@@ -11,8 +11,8 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { INDOOR_SPORTS, venueFor, placeGuesses, normalize as teamKey } from './venues.js';
 // Optional features load separately, so a missing file switches that feature off instead of crashing the site.
-let loadNflEpa = null, loadCfbEpa = null, loadNbaRatings = null, indexTeams = null;
-try { ({ loadNflEpa, loadCfbEpa, loadNbaRatings, indexTeams } = await import('./stats.js')); }
+let loadNflEpa = null, loadCfbEpa = null, loadNbaRatings = null, indexTeams = null, loadNflInjuries = null, loadEspnInjuries = null;
+try { ({ loadNflEpa, loadCfbEpa, loadNbaRatings, indexTeams, loadNflInjuries, loadEspnInjuries } = await import('./stats.js')); }
 catch (e) { console.error(`[startup] Team EPA is off: couldn't load stats.js (${e.message}). Upload stats.js to the main folder.`); }
 try { await import('./public/picks-engine.js'); } // defines globalThis.EdgePicks (also used by the page)
 catch (e) { console.error(`[startup] Edge Picks is off: couldn't load public/picks-engine.js (${e.message}). Upload it into the public folder.`); }
@@ -271,6 +271,37 @@ async function weatherFor(sport, ev) {
   }
 }
 
+// ---------- Injuries ----------
+// NFL from the official report (nflverse); NBA/NHL/MLB/WNBA from ESPN's public injury list.
+const INJURY_LOADERS = loadNflInjuries ? {
+  americanfootball_nfl: { load: () => loadNflInjuries(), ttl: 2 * 3600e3 },
+  basketball_nba: { load: () => loadEspnInjuries('basketball/nba'), ttl: 30 * 60e3 },
+  basketball_wnba: { load: () => loadEspnInjuries('basketball/wnba'), ttl: 30 * 60e3 },
+  icehockey_nhl: { load: () => loadEspnInjuries('hockey/nhl'), ttl: 30 * 60e3 },
+  baseball_mlb: { load: () => loadEspnInjuries('baseball/mlb'), ttl: 60 * 60e3 },
+} : {};
+const STATUS_ORDER = (s) => (/^out|^ir|^injured reserve|^suspension/i.test(s) ? 0 : /^doubtful/i.test(s) ? 1 : /^questionable|^day-to-day/i.test(s) ? 2 : /^missed/i.test(s) ? 3 : 4);
+
+async function injuryFinder(sport) {
+  const src = INJURY_LOADERS[sport];
+  if (!src) return null;
+  const data = await cached(`inj:${sport}`, (b) => (b ? src.ttl : 10 * 60e3),
+    () => src.load().catch((e) => { console.warn(`[injuries] ${sport}: ${e.message}`); return null; }));
+  if (!data) return null;
+  const find = indexTeams({ teams: data.teams });
+  const filed = data.reported ? indexTeams({ teams: data.reported.map((name) => ({ name })) }) : null;
+  const list = (name) => (find(name)?.players || []).slice().sort((a, b) => STATUS_ORDER(a.status) - STATUS_ORDER(b.status));
+  const pending = (name) => Boolean(filed && !filed(name)); // NFL team hasn't filed this week's report yet
+  return (ev) => ({ source: data.source, updated: data.updated, home: list(ev.home_team), away: list(ev.away_team), homePending: pending(ev.home_team), awayPending: pending(ev.away_team) });
+}
+
+// Short text for Ask Edge, e.g. "Lakers: LeBron James (F) Out - foot; ..."
+function injuryNote(inj, ev) {
+  if (!inj) return null;
+  const side = (team, ps, wait) => (wait ? `${team}: this week's report not filed yet` : ps.length ? `${team}: ${ps.slice(0, 8).map((p) => `${p.player}${p.pos ? ` (${p.pos})` : ''} ${p.status}${p.injury ? ` - ${p.injury}` : ''}${p.returns ? `, expected back ${p.returns}` : ''}`).join('; ')}` : `${team}: none listed`);
+  return `Injuries (${inj.source}): ${side(ev.away_team, inj.away, inj.awayPending)} | ${side(ev.home_team, inj.home, inj.homePending)}`;
+}
+
 // Team EPA/play for football boards, refreshed every 6 hours (nflverse updates daily; CFBD a few times a week).
 const EPA_TTL = 6 * 60 * 60 * 1000;
 const EPA_LOADERS = loadNflEpa ? { americanfootball_nfl: loadNflEpa, americanfootball_ncaaf: loadCfbEpa, basketball_nba: loadNbaRatings } : {};
@@ -462,6 +493,7 @@ function sportBoard(sport) {
     for (const x of r.sides) { const k = `${x.eventId}|${x.market}`; if (!main.has(k) || x.books > main.get(k).books) main.set(k, { line: x.line, books: x.books }); }
     const sides = r.sides.filter((x) => main.get(`${x.eventId}|${x.market}`).line === x.line);
     const epa = await soon(epaFinder(sport), 800);
+    const inj = await soon(injuryFinder(sport), 1500);
     const games = new Map();
     for (const ev of events) {
       if (!sides.some((x) => x.eventId === ev.id)) continue;
@@ -470,6 +502,7 @@ function sportBoard(sport) {
       games.set(ev.id, {
         sport, eventId: ev.id, home: ev.home_team, away: ev.away_team, start: ev.commence_time, game: `${ev.away_team} @ ${ev.home_team}`,
         weather: !w ? null : w.type === 'indoor' ? `Indoors${w.site ? ` (${w.site})` : ''}` : w.tempF != null ? `${w.tempF}F, ${w.windMph} mph wind, ${w.rainPct || 0}% chance of precipitation${w.type === 'retractable' ? ', retractable roof' : ''}${w.site ? `, at ${w.site}` : ''}` : 'Forecast not out yet',
+        injuries: inj ? injuryNote(inj(ev), ev) : null,
         epa: e && e.home && e.away ? (e.kind === 'rating'
           ? `Team ratings, points per 100 possessions (${e.through || 'season'}; rank of ${e.of}; defense: lower is better): ${[[ev.away_team, e.away], [ev.home_team, e.home]].map(([n, t]) => `${n} offense ${t.off.toFixed(1)} #${t.offRank}, defense ${t.def.toFixed(1)} #${t.defRank}, net ${t.net >= 0 ? '+' : ''}${t.net.toFixed(1)} #${t.netRank}`).join('; ')}`
           : `EPA per play (${e.through || 'season'}; rank of ${e.of}; defense: lower is better): ${[[ev.away_team, e.away], [ev.home_team, e.home]].map(([n, t]) => `${n} offense ${t.off.toFixed(2)} #${t.offRank}, defense ${t.def.toFixed(2)} #${t.defRank}, net ${t.net.toFixed(2)} #${t.netRank}`).join('; ')}`) : null,
@@ -516,7 +549,7 @@ async function toolFindBestBets(reg, input) {
   return {
     sports_checked: boards.map((b) => SPORT_NAMES[b.sport] || b.sport),
     prices_as_of: boards.map((b) => b.fetchedAt).filter(Boolean).sort()[0] ? `${etTime(boards.map((b) => b.fetchedAt).filter(Boolean).sort()[0])} ET or later` : null,
-    best_bets: pool.slice(0, limit).map(({ x, g }) => ({ ...betView(reg, x, g), weather: g.weather, epa: g.epa })),
+    best_bets: pool.slice(0, limit).map(({ x, g }) => ({ ...betView(reg, x, g), weather: g.weather, epa: g.epa, injuries: g.injuries })),
     best_parlays: pr.parlays.map((p) => ({
       legs: p.legs.map((l) => { const f = findSide(l); return f ? `${reg.bet(f.x)}: ${l.pick} ${l.odds} (${l.game})` : `${l.pick} ${l.odds} (${l.game})`; }),
       sportsbook: p.title, odds: p.odds, ten_dollars_returns: `$${(10 * p.dec).toFixed(2)}`, chance_all_win: pct1(p.hit), edge: pct1(p.ev),
@@ -539,7 +572,7 @@ async function toolListGames(reg, input) {
     sport: SPORT_NAMES[sport], prices_as_of: b.fetchedAt ? `${etTime(b.fetchedAt)} ET` : null, games_found: games.length,
     player_props_available: (PROP_MARKETS[sport] || []).length > 0,
     games: games.map((g) => ({
-      game_id: reg.game(g), game: g.game, starts: `${etTime(g.start)} ET`, weather: g.weather, epa: g.epa,
+      game_id: reg.game(g), game: g.game, starts: `${etTime(g.start)} ET`, weather: g.weather, epa: g.epa, injuries: g.injuries,
       bets: b.sides.filter((x) => x.eventId === g.eventId).map((x) => { const v = betView(reg, x, g); return { id: v.id, bet: v.bet, type: v.type, best_price: v.best_price, sportsbook: v.sportsbook, fair_chance: v.fair_chance, fair_price: v.fair_price, edge: v.edge }; }),
     })),
   };
@@ -625,13 +658,13 @@ function toolPriceBet(reg, input) {
 }
 
 const ASK_TOOLS = [
-  { name: 'find_best_bets', description: 'Scan one, several, or all sports for the best-priced bets (biggest edge) and the best parlays (one leg per game, all at one sportsbook). Results include weather and team stats (football EPA, NBA ratings) for each game. Use this for "best bets", "what should I bet", "build me a parlay" across sports.',
+  { name: 'find_best_bets', description: 'Scan one, several, or all sports for the best-priced bets (biggest edge) and the best parlays (one leg per game, all at one sportsbook). Results include weather, team stats (football EPA, NBA ratings) and injury reports for each game. Use this for "best bets", "what should I bet", "build me a parlay" across sports.',
     input_schema: { type: 'object', properties: {
       sports: { type: 'array', items: { type: 'string' }, description: 'Sports to include, e.g. ["NFL","NBA"]. Leave empty for every sport in season.' },
       days: { type: 'number', description: 'How many days ahead to look (1-7). Default 2.' },
       market: { type: 'string', enum: ['h2h', 'spreads', 'totals'], description: 'Only one bet type (h2h = moneyline). Leave out for all.' },
       limit: { type: 'number', description: 'How many single bets to return (max 15). Default 8.' } } } },
-  { name: 'list_games', description: 'List upcoming games for one sport with every main-line bet (moneyline, spread, total) and its best price, fair chance and edge, plus weather and team stats (football EPA, NBA offensive/defensive/net rating). Use to look up a specific team or game.',
+  { name: 'list_games', description: 'List upcoming games for one sport with every main-line bet (moneyline, spread, total) and its best price, fair chance and edge, plus weather, team stats (football EPA, NBA offensive/defensive/net rating) and injury reports. Use to look up a specific team or game, or who is injured.',
     input_schema: { type: 'object', properties: {
       sport: { type: 'string', description: 'e.g. "NFL", "college football", "NBA", "NHL", "Premier League", "UFC".' },
       days: { type: 'number', description: 'Days ahead (1-7). Default 3.' },
@@ -665,7 +698,7 @@ async function askSystem(viewing) {
   return `You are Edge, the betting assistant on the Edge odds comparison website. It is ${today} ET.
 Sports in season on the site: ${active}.${viewing ? ` The user is currently looking at ${SPORT_NAMES[viewing] || viewing}, which is a hint, not a limit.` : ''}
 
-You can see everything on the site through tools: odds for every sport (moneyline, spread, total), each bet's best price at licensed US sportsbooks, fair chance, fair price and edge, plus weather, team stats (EPA per play for NFL and college football; offensive, defensive and net rating for the NBA), and player props. Look things up with the tools. Never guess a price, team, line or number.
+You can see everything on the site through tools: odds for every sport (moneyline, spread, total), each bet's best price at licensed US sportsbooks, fair chance, fair price and edge, plus weather, team stats (EPA per play for NFL and college football; offensive, defensive and net rating for the NBA), injury reports (NFL official report; NBA, NHL, MLB and WNBA from ESPN's injury list), and player props. Look things up with the tools. Never guess a price, team, line or number.
 - "fair chance" = all sportsbooks' prices combined with each book's built-in cut removed. It is the market's estimate, not a separate prediction.
 - "edge" = how the best price compares with the fair chance. Positive is a bargain; negative is what the sportsbook keeps on average.
 - A parlay must be placed at one sportsbook. Legs can come from different sports. Use price_bet for every parlay or payout calculation; never do that math yourself.
@@ -675,7 +708,8 @@ How to answer:
 - Be short and plain, so a 5th grader could follow: usually 2 to 6 sentences or a short dash list. Plain text, no markdown headers, tables or bold. Never show internal ids (like B3, G2, P5).
 - Copy prices, lines and sportsbook names exactly from tool results. Give the chance of winning when you recommend something.
 - "Best bet" means best price compared with the fair chance, not a sure winner. Never promise a win or call anything a lock or guaranteed.
-- You do not know injuries, lineups, news, player stats, records or trends beyond what the tools return. If asked, say so and suggest checking the latest news.
+- Injuries: use the injury reports in tool results and name the source (and NFL report week). They can lag late news, so for game-time decisions suggest checking right before the game. College football, college basketball, soccer and UFC have no injury data here. Beyond what the tools return, you do not know lineups, news, player stats, records or trends.
+- When a key player is Out or Doubtful, mention it next to that pick. The odds usually already reflect known injuries, so do not treat an injury as a reason the price is wrong.
 - Live games are not included. Games far ahead may not have prices yet.
 - If someone mentions chasing losses, betting money they need, or feeling out of control, be kind, suggest a break, and share the 1-800-GAMBLER helpline.
 - Stay on sports betting and this site. Politely decline unrelated requests.`;
@@ -753,11 +787,12 @@ async function handleApi(req, res, url) {
     if (!MARKETS.has(market)) return sendJSON(res, 400, { error: 'unknown_market' });
 
     const body = await getOdds(sport, market);
-    const [epa, weather] = await Promise.all([
+    const [epa, inj, weather] = await Promise.all([
       soon(epaFinder(sport)),
+      soon(injuryFinder(sport)),
       Promise.all(body.events.map((ev) => soon(weatherFor(sport, ev)))),
     ]);
-    const events = body.events.map((ev, i) => ({ ...ev, weather: weather[i], epa: epa ? epa(ev) : null }));
+    const events = body.events.map((ev, i) => ({ ...ev, weather: weather[i], epa: epa ? epa(ev) : null, injuries: inj ? inj(ev) : null }));
     const { quota, ...pub } = body; // credit balance stays private (it's in the server log)
     // Tell the page when this is an older copy and a fresh one is on its way, so it can check back in a few seconds.
     const entry = cache.get(`odds:${sport}:${market}`);
@@ -835,13 +870,29 @@ setInterval(() => {
   for (const [k, v] of cache) if (/^(props|wx|espn|ai|askboard):/.test(k) && v.at < cutoff && !v.inflight) cache.delete(k);
 }, 15 * 60 * 1000).unref();
 
+// Visitor analytics: paste your Cloudflare Web Analytics site token into CF_ANALYTICS_TOKEN and the
+// beacon script is added to the page automatically. (The site token is public; API keys are not.)
+const CF_TOKEN = (process.env.CF_ANALYTICS_TOKEN || '').trim();
+let analyticsTag = '';
+if (CF_TOKEN) {
+  if (/^cfk_|^cfut_|^cfat_/i.test(CF_TOKEN) || CF_TOKEN.length > 64) {
+    console.warn('[analytics] CF_ANALYTICS_TOKEN looks like a secret Cloudflare API key, not a Web Analytics site token. Not adding it to the page. Use the token from the Web Analytics snippet instead.');
+  } else if (!/^[A-Za-z0-9_-]{16,64}$/.test(CF_TOKEN)) {
+    console.warn('[analytics] CF_ANALYTICS_TOKEN has unexpected characters. Copy just the token from the Web Analytics snippet.');
+  } else {
+    analyticsTag = `<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "${CF_TOKEN}"}'></script>`;
+    console.log('[analytics] Cloudflare Web Analytics is on.');
+  }
+}
+
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
 
 async function handleStatic(res, pathname) {
   const rel = normalize(decodeURIComponent(pathname)).replace(/^([/\\])+/, '') || 'index.html';
   if (rel.startsWith('..')) { res.writeHead(403); return res.end(); }
   try {
-    const file = await readFile(join(ROOT, rel));
+    let file = await readFile(join(ROOT, rel));
+    if (analyticsTag && rel === 'index.html') file = Buffer.from(file.toString('utf8').replace('</body>', `${analyticsTag}\n</body>`));
     send(res, 200, { 'content-type': TYPES[extname(rel)] || 'application/octet-stream', 'cache-control': 'no-cache' }, file);
   } catch {
     res.writeHead(404, { 'content-type': 'text/plain' });
@@ -862,4 +913,5 @@ http.createServer(async (req, res) => {
   console.log(`Edge running on http://localhost:${PORT} (${API_KEY ? 'live odds' : 'demo mode — set ODDS_API_KEY'})`);
   // Start the slow loads right away so the first visitor after a restart doesn't wait for them.
   if (API_KEY) for (const sport of Object.keys(EPA_LOADERS)) epaFinder(sport);
+  if (API_KEY) for (const sport of Object.keys(INJURY_LOADERS)) injuryFinder(sport);
 });

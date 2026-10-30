@@ -9,6 +9,7 @@ import { normalize } from './venues.js';
 
 const NFLVERSE = (process.env.NFLVERSE_BASE || 'https://github.com/nflverse/nflverse-data/releases/download').replace(/\/$/, '');
 const CFBD = (process.env.CFBD_API_BASE || 'https://api.collegefootballdata.com').replace(/\/$/, '');
+const ESPN_INJ = (process.env.ESPN_API_BASE || 'https://site.api.espn.com').replace(/\/$/, '');
 const SDV = (process.env.SPORTSDATAVERSE_BASE || 'https://github.com/sportsdataverse/sportsdataverse-data/releases/download').replace(/\/$/, '');
 
 const NFL_TEAMS = {
@@ -140,6 +141,64 @@ export async function loadCfbEpa(season = footballSeason()) {
     .map((t) => ({ name: t.team, off: t.offense.ppa, def: t.defense.ppa, net: t.offense.ppa - t.defense.ppa, plays: t.offense.plays }));
   rank(teams, 'net', true); rank(teams, 'off', true); rank(teams, 'def', false);
   return { kind: 'epa', season, through: null, count: teams.length, teams };
+}
+
+// ---------- Injuries ----------
+// Shape returned by both loaders: { source, updated, teams: [{ name, players: [{ player, pos, status, injury, note, returns }] }] }
+const SERIOUS = /^(out|doubtful|questionable|day-to-day|suspension|injured reserve|ir)/i;
+
+// NFL: the official league injury report, published by nflverse (updates as teams file reports, usually Wed-Sat).
+export async function loadNflInjuries(season = footballSeason()) {
+  const res = await fetch(`${NFLVERSE}/injuries/injuries_${season}.csv`);
+  if (!res.ok) throw new Error(`nflverse injuries ${res.status}`);
+  const updated = res.headers.get('last-modified');
+  const rows = [];
+  let cols = null, maxWeek = 0;
+  await streamCsv(Readable.fromWeb(res.body), (r) => {
+    if (!cols) { cols = Object.fromEntries(r.map((name, i) => [name, i])); return; }
+    const week = Number(r[cols.week]) || 0;
+    rows.push({ week, team: r[cols.team], player: r[cols.full_name], pos: r[cols.position], status: r[cols.report_status], injury: [r[cols.report_primary_injury], r[cols.report_secondary_injury]].filter(Boolean).join(', '), practice: r[cols.practice_status] });
+    maxWeek = Math.max(maxWeek, week);
+  });
+  const byTeam = new Map();
+  const reported = new Set(); // teams that have filed this week's report (even if nobody is listed)
+  for (const x of rows) {
+    if (x.week === maxWeek && NFL_TEAMS[x.team]) reported.add(NFL_TEAMS[x.team]);
+    // Before the Friday game-status report, use the practice report (who missed or was limited).
+    if (!x.status && /did not participate/i.test(x.practice || '')) x.status = 'Missed practice';
+    else if (!x.status && /limited/i.test(x.practice || '')) x.status = 'Limited in practice';
+    if (x.week !== maxWeek || !x.status || !NFL_TEAMS[x.team]) continue;
+    const name = NFL_TEAMS[x.team];
+    if (!byTeam.has(name)) byTeam.set(name, []);
+    byTeam.get(name).push({ player: x.player, pos: x.pos, status: x.status, injury: x.injury || null, note: x.practice || null, returns: null });
+  }
+  return { source: `Official NFL injury report, Week ${maxWeek}`, updated, week: maxWeek, reported: [...reported], teams: [...byTeam.entries()].map(([name, players]) => ({ name, players })) };
+}
+
+// NBA / NHL / MLB / WNBA: ESPN's public injury list (unofficial, updates through the day).
+export async function loadEspnInjuries(path) {
+  const res = await fetch(`${ESPN_INJ}/apis/site/v2/sports/${path}/injuries`);
+  if (!res.ok) throw new Error(`ESPN injuries ${res.status}`);
+  const body = await res.json();
+  const teams = [];
+  for (const t of body.injuries || []) {
+    const name = t.displayName || t.team?.displayName || t.team?.name;
+    if (!name) continue;
+    const players = [];
+    for (const i of t.injuries || []) {
+      const status = i.status || i.type?.description || i.details?.fantasyStatus?.description;
+      if (!status || !SERIOUS.test(status)) continue;
+      const d = i.details || {};
+      const injury = [d.side && d.side !== 'Not Specified' ? d.side : null, d.location, d.type].filter(Boolean).join(' ') || null;
+      players.push({
+        player: i.athlete?.displayName || i.athlete?.fullName || 'Unknown player', pos: i.athlete?.position?.abbreviation || null,
+        status, injury, note: i.shortComment || null, returns: d.returnDate || null,
+      });
+    }
+    if (players.length) teams.push({ name, players });
+  }
+  if (!body.injuries) console.warn(`[injuries] ESPN ${path}: unexpected response shape (no "injuries" list)`);
+  return { source: 'ESPN injury report', updated: new Date().toUTCString(), teams };
 }
 
 // Odds feeds and stats sites spell some schools differently.
