@@ -48,6 +48,9 @@
   .sport[data-inactive="true"] { opacity: 0.35; }
   .sport .ct { font-family: var(--mono); font-size: 11px; opacity: 0.6; margin-left: 4px; }
 
+  .fantasylink { flex-shrink: 0; text-decoration: none; font-weight: 700; font-size: 13px; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--best-line); color: var(--accent); background: var(--best-bg); white-space: nowrap; }
+  .fantasylink:hover { background: var(--accent); color: var(--accent-ink); }
+
   /* Controls */
   .controls { max-width: 1440px; margin: 0 auto; padding: 18px 20px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
   .seg { display: inline-flex; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 3px; }
@@ -390,6 +393,7 @@
       EDGE<small>odds board</small>
     </div>
     <nav class="sports" id="sports" aria-label="Sports"></nav>
+    <a class="fantasylink" href="fantasy.html">🏀 Fantasy</a>
   </div>
 </header>
 

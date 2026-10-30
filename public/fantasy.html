@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edge Fantasy — NBA Rankings & Trade Machine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0d12; --panel: #11161e; --panel-2: #161c26; --line: #222a36; --line-soft: #1a212c;
+    --text: #e8edf4; --muted: #8692a3; --faint: #5a6576; --accent: #c6f432; --accent-ink: #0b1000;
+    --up: #35d07f; --down: #ff6b6b; --warn: #ffb547; --radius: 10px;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Inter Tight', system-ui, sans-serif; font-size: 14px; -webkit-font-smoothing: antialiased; }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  a { color: inherit; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  header.top { position: sticky; top: 0; z-index: 20; background: rgba(10, 13, 18, 0.92); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  .bar { max-width: 1440px; margin: 0 auto; padding: 14px 20px; display: flex; align-items: center; gap: 20px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: 0.14em; font-size: 17px; white-space: nowrap; text-decoration: none; }
+  .brand-mark { width: 26px; height: 26px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; }
+  .brand-mark svg { width: 16px; height: 16px; }
+  .brand small { font-weight: 500; letter-spacing: 0.02em; color: var(--muted); font-size: 12px; margin-left: 4px; }
+  .nav { display: flex; gap: 4px; flex: 1; overflow-x: auto; scrollbar-width: none; }
+  .nav a, .nav span { padding: 7px 12px; border-radius: 999px; color: var(--muted); font-weight: 600; font-size: 13px; text-decoration: none; white-space: nowrap; }
+  .nav a:hover { color: var(--text); background: var(--panel-2); }
+  .nav .on { background: var(--text); color: var(--bg); }
+  .nav .soon { opacity: 0.35; cursor: default; }
+
+  main { max-width: 1440px; margin: 0 auto; padding: 18px 20px 80px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tab { border: 1px solid var(--line); background: var(--panel); padding: 9px 16px; border-radius: 999px; font-weight: 700; color: var(--muted); }
+  .tab[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .datanote { margin-left: auto; color: var(--faint); font-size: 12px; align-self: center; }
+
+  .settings { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px; }
+  .settings label.lbl { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); font-weight: 700; margin-right: -6px; }
+  .seg { display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 3px; }
+  .seg button { border: 0; background: transparent; padding: 6px 11px; border-radius: 6px; color: var(--muted); font-weight: 600; font-size: 13px; white-space: nowrap; }
+  .seg button[aria-pressed="true"] { background: var(--panel-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+  select, .inp { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; outline: none; }
+  .inp:focus, select:focus { border-color: var(--faint); }
+  .chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+  .chip { border: 1px solid var(--line); background: var(--bg); color: var(--muted); padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 700; font-family: var(--mono); }
+  .chip[aria-pressed="true"] { background: rgba(255, 107, 107, 0.14); border-color: rgba(255, 107, 107, 0.55); color: var(--down); text-decoration: line-through; }
+  .linkbtn { border: 0; background: none; color: var(--accent); font-weight: 600; font-size: 13px; padding: 4px; }
+  .scoring { display: none; width: 100%; gap: 8px; flex-wrap: wrap; padding-top: 8px; border-top: 1px dashed var(--line); }
+  .scoring.open { display: flex; }
+  .scoring label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); font-weight: 600; }
+  .scoring input { width: 62px; }
+
+  .filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .filters .inp { min-width: 200px; }
+  .count { color: var(--faint); font-size: 12px; }
+
+  .tablewrap { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: auto; max-height: calc(100vh - 250px); }
+  table.rk { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 1060px; }
+  table.rk th { position: sticky; top: 0; z-index: 2; background: var(--panel-2); color: var(--muted); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 700; padding: 10px 8px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; cursor: pointer; user-select: none; }
+  table.rk th.l, table.rk td.l { text-align: left; }
+  table.rk th.sorted { color: var(--accent); }
+  table.rk th.punted { opacity: 0.35; text-decoration: line-through; }
+  table.rk td { padding: 7px 8px; border-bottom: 1px solid var(--line-soft); text-align: right; font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+  table.rk tbody tr { cursor: pointer; }
+  table.rk tbody tr:hover td { background: rgba(255,255,255,0.025); }
+  table.rk td.rank { color: var(--faint); width: 44px; }
+  table.rk td.val { font-weight: 700; color: var(--text); }
+  table.rk td.dim { opacity: 0.35; }
+  .pl { display: flex; align-items: center; gap: 8px; font-family: 'Inter Tight', sans-serif; }
+  .pl b { font-weight: 700; font-size: 13.5px; }
+  .tm { font-family: var(--mono); font-size: 10.5px; font-weight: 600; padding: 1px 5px; border-radius: 4px; color: #fff; }
+  .pos { color: var(--faint); font-size: 11.5px; font-family: var(--mono); }
+  .ij { font-size: 10px; font-weight: 800; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; font-family: var(--mono); }
+  .ij.out { background: rgba(255,107,107,0.16); color: var(--down); }
+  .ij.q { background: rgba(255,181,71,0.15); color: var(--warn); }
+  .sub { color: var(--faint); font-size: 10.5px; margin-left: 3px; }
+  .more { display: block; margin: 12px auto 0; border: 1px solid var(--line); background: var(--panel); padding: 9px 18px; border-radius: 8px; font-weight: 600; color: var(--muted); }
+
+  /* drawer */
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 40; display: none; }
+  .scrim.open { display: block; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(640px, 100vw); background: var(--panel); border-left: 1px solid var(--line); z-index: 41; transform: translateX(100%); transition: transform 0.2s; overflow-y: auto; }
+  .drawer.open { transform: none; }
+  .dhead { position: sticky; top: 0; background: var(--panel); border-bottom: 1px solid var(--line); padding: 16px 18px; display: flex; align-items: flex-start; gap: 12px; z-index: 2; }
+  .dhead h2 { margin: 0 0 4px; font-size: 20px; }
+  .x { margin-left: auto; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; width: 34px; height: 34px; font-size: 18px; flex-shrink: 0; }
+  .dbody { padding: 16px 18px 40px; display: grid; gap: 18px; }
+  .sec h3 { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin: 0 0 8px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+  .kpi { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; }
+  .kpi .k { font-size: 11px; color: var(--muted); font-weight: 600; }
+  .kpi .v { font-family: var(--mono); font-size: 17px; font-weight: 700; margin-top: 2px; }
+  .kpi .h { font-size: 11px; color: var(--faint); margin-top: 2px; }
+  table.mini { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  table.mini th { color: var(--faint); font-weight: 600; font-size: 10.5px; text-align: right; padding: 5px 5px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.mini td { text-align: right; padding: 6px 5px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+  table.mini th:first-child, table.mini td:first-child { text-align: left; font-family: 'Inter Tight', sans-serif; }
+  .scroll { overflow-x: auto; }
+  .zbars { display: grid; gap: 5px; }
+  .zrow { display: grid; grid-template-columns: 48px 1fr 58px; align-items: center; gap: 8px; font-size: 12px; }
+  .zrow .nm { font-family: var(--mono); color: var(--muted); font-weight: 600; }
+  .zrow .track { position: relative; height: 12px; background: var(--bg); border-radius: 3px; }
+  .zrow .track::after { content: ''; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--faint); }
+  .zrow .fill { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+  .zrow .zv { font-family: var(--mono); text-align: right; font-weight: 600; }
+  .zrow.punted { opacity: 0.35; }
+  .note { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+  .note b { color: var(--text); }
+  .lst { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { border: 1px solid var(--line); background: var(--bg); padding: 8px 14px; border-radius: 8px; font-weight: 700; font-size: 13px; }
+  .btn.pri { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+  /* trade machine */
+  .trade { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .side { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; min-height: 180px; }
+  .side h3 { margin: 0 0 10px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+  .side h3 .tot { margin-left: auto; font-family: var(--mono); color: var(--muted); letter-spacing: 0; text-transform: none; font-size: 12px; }
+  .side.give h3 { color: var(--down); }
+  .side.get h3 { color: var(--up); }
+  .pick { position: relative; margin-bottom: 10px; }
+  .pick .inp { width: 100%; }
+  .ac { position: absolute; left: 0; right: 0; top: calc(100% + 4px); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; z-index: 10; overflow: hidden; display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
+  .ac.open { display: block; }
+  .ac button { display: flex; width: 100%; align-items: center; gap: 8px; padding: 8px 10px; border: 0; background: transparent; text-align: left; }
+  .ac button:hover, .ac button.hi { background: rgba(255,255,255,0.05); }
+  .ac .r { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .tp { display: flex; align-items: center; gap: 10px; padding: 9px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; }
+  .tp .meta { font-size: 11.5px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
+  .tp .rm { margin-left: auto; border: 0; background: none; color: var(--faint); font-size: 18px; padding: 0 4px; }
+  .tp .open { border: 0; background: none; color: var(--text); padding: 0; text-align: left; font-weight: 700; }
+  .empty { color: var(--faint); font-size: 13px; padding: 18px 4px; text-align: center; }
+  .result { display: grid; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  .verdict { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  .verdict .big { font-size: 26px; font-weight: 800; }
+  .verdict .big.win { color: var(--up); } .verdict .big.loss { color: var(--down); } .verdict .big.fair { color: var(--warn); }
+  .vs { flex: 1; min-width: 260px; display: grid; gap: 6px; }
+  .vsrow { display: grid; grid-template-columns: 80px 1fr 70px; gap: 8px; align-items: center; font-size: 12px; font-weight: 600; }
+  .vsrow .b { height: 14px; border-radius: 4px; }
+  .vsrow .n { font-family: var(--mono); text-align: right; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .take { white-space: pre-wrap; line-height: 1.6; font-size: 14px; }
+  .help { color: var(--muted); line-height: 1.6; font-size: 14px; max-width: 860px; }
+  .help h3 { color: var(--text); margin: 18px 0 6px; font-size: 15px; }
+  .help code { font-family: var(--mono); font-size: 12.5px; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+  .banner { background: rgba(255,181,71,0.1); border: 1px solid rgba(255,181,71,0.4); color: var(--warn); padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
+  .loading { color: var(--muted); padding: 60px 0; text-align: center; }
+
+  @media (max-width: 820px) {
+    .bar { padding: 12px 14px; gap: 12px; }
+    .brand small { display: none; }
+    main { padding: 14px 12px 80px; }
+    .trade, .grid2 { grid-template-columns: 1fr; }
+    .datanote { margin-left: 0; width: 100%; }
+    .tablewrap { max-height: none; }
+    .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+    table.rk td.l.player { position: sticky; left: 0; background: var(--panel); z-index: 1; }
+    table.rk th.l.player { position: sticky; left: 0; z-index: 3; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="bar">
+    <a class="brand" href="index.html">
+      <div class="brand-mark"><svg viewBox="0 0 16 16" fill="none"><path d="M3 12.5 8 3l5 9.5" stroke="#0b1000" stroke-width="2.2" stroke-linejoin="round"/><path d="M5.5 9.5h5" stroke="#0b1000" stroke-width="2.2"/></svg></div>
+      EDGE<small>fantasy</small>
+    </a>
+    <nav class="nav">
+      <a href="index.html">Odds</a>
+      <a class="on" href="fantasy.html">🏀 Fantasy NBA</a>
+      <span class="soon" title="Coming later">Fantasy NFL · soon</span>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="tabs">
+    <button class="tab" data-tab="rank" aria-pressed="true">Player Rankings</button>
+    <button class="tab" data-tab="trade" aria-pressed="false">Trade Machine</button>
+    <button class="tab" data-tab="help" aria-pressed="false">How it works</button>
+    <span class="datanote" id="datanote"></span>
+  </div>
+
+  <div id="banner"></div>
+
+  <section class="settings" id="settings">
+    <label class="lbl">League</label>
+    <div class="seg" id="fmt"><button data-v="9cat">9-Cat</button><button data-v="points">Points</button></div>
+    <label class="lbl">Stats</label>
+    <div class="seg" id="mode">
+      <button data-v="proj" title="This season, blended with last season while the sample is small">Projected</button>
+      <button data-v="cur">This season</button>
+      <button data-v="l14">Last 14 days</button>
+      <button data-v="prev">Last season</button>
+    </div>
+    <select id="teams" aria-label="Teams in league"></select>
+    <select id="roster" aria-label="Roster spots"></select>
+    <span id="puntbox"><label class="lbl" style="margin-right:4px">Punt</label> <span class="chips" id="punt"></span></span>
+    <span id="scorebox"><select id="preset" aria-label="Scoring"></select> <button class="linkbtn" id="editscore">Edit scoring</button></span>
+    <div class="scoring" id="scoring"></div>
+  </section>
+
+  <section id="v-rank">
+    <div class="filters">
+      <input class="inp" id="q" placeholder="Search players or teams…" autocomplete="off">
+      <div class="seg" id="posf"><button data-v="">All</button><button data-v="G">G</button><button data-v="F">F</button><button data-v="C">C</button></div>
+      <div class="seg" id="healthf"><button data-v="">Everyone</button><button data-v="healthy">Hide injured</button></div>
+      <span class="count" id="count"></span>
+    </div>
+    <div class="tablewrap"><table class="rk" id="table"></table></div>
+    <button class="more" id="more" hidden>Show more</button>
+  </section>
+
+  <section id="v-trade" hidden>
+    <div class="trade">
+      <div class="side give"><h3>You give <span class="tot" id="totGive"></span></h3><div class="pick"><input class="inp" data-side="give" placeholder="Add a player you're sending…" autocomplete="off"><div class="ac"></div></div><div id="giveList"></div></div>
+      <div class="side get"><h3>You get <span class="tot" id="totGet"></span></h3><div class="pick"><input class="inp" data-side="get" placeholder="Add a player you're receiving…" autocomplete="off"><div class="ac"></div></div><div id="getList"></div></div>
+    </div>
+    <div class="result" id="result"></div>
+  </section>
+
+  <section id="v-help" hidden>
+    <div class="help">
+      <h3>Where the numbers come from</h3>
+      Every NBA box score this season and last season (from the free sportsdataverse data set, which copies ESPN box scores). Injuries come from ESPN's injury report. It all updates every few hours, and none of it uses odds credits.
+      <h3>The four stat views</h3>
+      <b>This season</b> and <b>Last 14 days</b> are exactly what happened. <b>Last season</b> is last year's per-game numbers. <b>Projected</b> is the one we recommend: this season's numbers, with 12 games of last season mixed in. Early in the year that keeps a hot or cold week from fooling you; by midseason it's almost all this year. Rookies use only this season.
+      <h3>9-Cat rankings</h3>
+      For each category (FG%, FT%, 3PM, PTS, REB, AST, STL, BLK, TO), we compare a player to the average of the top players who'd be rostered in your league (teams × roster spots). The difference is shown as a <b>z-score</b>: <code>+1.0</code> means one "step" better than a typical rostered player, <code>-1.0</code> one step worse. Turnovers are flipped, so fewer is better. FG% and FT% count by <b>impact</b>: a 60% shooter on 15 shots a game helps your team's FG% far more than a 60% shooter on 3 shots. A player's <b>Value</b> is his z-scores added up. If you <b>punt</b> a category, it's left out of Value.
+      <h3>Points rankings</h3>
+      <b>FPPG</b> is each player's per-game stats times your league's scoring. ESPN and Yahoo defaults are built in, or tap <b>Edit scoring</b> to match your league. <b>ROS FP</b> is FPPG × the games we expect him to play the rest of the season.
+      <h3>Player metrics</h3>
+      <b>USG%</b> (usage rate): the share of his team's plays he finishes with a shot, free throws or a turnover while he's on the floor; 20% is average, 30%+ is a team's go-to scorer. <b>TS%</b> (true shooting): scoring efficiency, counting 3s and free throws; around 58% is average. <b>eFG%</b>: field goal % with 3s worth 1.5 makes. <b>Role</b>: starter, key bench (22+ minutes), rotation (14+) or fringe. <b>Team minutes rank</b> shows where he sits in his team's rotation.
+      <h3>How the Trade Machine decides</h3>
+      1. Each player's value per game (9-cat Value or FPPG) is compared to a <b>waiver-level</b> player: the average player just outside the rostered pool, the one you could pick up for free.<br>
+      2. That's multiplied by the <b>games he's expected to play</b> the rest of the season: his team's games left, minus games he'll miss if he's injured (from his return date), times how often he's played this season and last (durability).<br>
+      3. Add up each side. More players doesn't automatically win: if you get 2 players for 1, you have to cut someone (a waiver-level player), and if you get 1 for 2 you get a free spot to fill from waivers. Comparing to waiver level handles both.<br>
+      4. For 9-cat we also show how each category changes per game, so you can tell if a trade fits your punt build.<br>
+      5. We flag the things numbers can miss: small samples, minutes or usage going up or down, injured teammates opening up shots, and players listed behind him at his position.<br>
+      <b>Edge's take</b> sends this exact breakdown to our AI to explain it in plain English. It can only use these numbers; it doesn't read news.
+      <h3>What it can't know</h3>
+      Your league's waiver wire, your opponent's needs, trades and coaching changes before they show up in box scores, and playoff schedules. Use it as a strong second opinion, not a guarantee.
+    </div>
+  </section>
+</main>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true"></aside>
+
+<script src="fantasy-engine.js"></script>
+<script>
+(() => {
+  const F = globalThis.EdgeFantasy;
+  const $ = (s, el = document) => el.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const f1 = (v) => (v == null || !Number.isFinite(v) ? '–' : v.toFixed(1));
+  const f2 = (v) => (v == null || !Number.isFinite(v) ? '–' : v.toFixed(2));
+  const pct3 = (v) => (v == null ? '–' : v.toFixed(3).replace(/^0/, ''));
+  const pct1 = (v) => (v == null ? '–' : (v * 100).toFixed(1) + '%');
+  const sgn = (v, d = 1) => (v == null || !Number.isFinite(v) ? '–' : (v > 0 ? '+' : '') + v.toFixed(d));
+  const MODE_LABEL = { proj: 'Projected', cur: 'This season', l14: 'Last 14 days', prev: 'Last season' };
+
+  const saved = (() => { try { return JSON.parse(localStorage.getItem('edge.fantasy') || '{}'); } catch { return {}; } })();
+  const S = {
+    tab: 'rank', format: saved.format || '9cat', mode: saved.mode || 'proj', teams: saved.teams || 12, roster: saved.roster || 13,
+    punt: saved.punt || [], preset: saved.preset || 'espn', custom: saved.custom || { ...F.SCORING.espn },
+    q: '', pos: '', health: '', sort: null, sortDir: -1, show: 150,
+    give: [], get: [], take: null, takeKey: null,
+  };
+  const persist = () => { try { localStorage.setItem('edge.fantasy', JSON.stringify({ format: S.format, mode: S.mode, teams: S.teams, roster: S.roster, punt: S.punt, preset: S.preset, custom: S.custom })); } catch {} };
+  const scoring = () => (S.preset === 'custom' ? S.custom : F.SCORING[S.preset]);
+  const opts = () => ({ format: S.format, mode: S.mode, teams: S.teams, roster: S.roster, punt: S.punt, scoring: scoring() });
+
+  let DATA = null, R = null, byId = new Map(), rankById = new Map();
+
+  // ---------- load ----------
+  async function load() {
+    $('#table').innerHTML = '<tbody><tr><td class="loading">Loading every NBA box score…</td></tr></tbody>';
+    let sample = false;
+    try {
+      const r = await fetch('/api/fantasy/nba', { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      DATA = await r.json();
+    } catch {
+      try { const r = await fetch('fantasy-sample.json'); if (!r.ok) throw 0; DATA = await r.json(); sample = true; }
+      catch { $('#table').innerHTML = '<tbody><tr><td class="loading">Couldn\'t load player stats right now. Try again in a minute.</td></tr></tbody>'; return; }
+    }
+    byId = new Map(DATA.players.map((p) => [p.id, p]));
+    $('#datanote').textContent = `${DATA.season} stats through ${DATA.through || '—'} · ${DATA.players.length} players${DATA.injuries ? ' · injuries from ESPN' : ''}`;
+    if (sample) $('#banner').innerHTML = `<div class="banner">Preview mode: showing saved sample stats through ${esc(DATA.through)}. On your live site this updates automatically.</div>`;
+    else if (!DATA.hasCurrent) $('#banner').innerHTML = '<div class="banner">This season hasn\'t started in the data yet, so everything uses last season.</div>';
+    readHash();
+    recompute();
+  }
+
+  function recompute() {
+    if (!DATA) return;
+    R = F.rank(DATA.players, { ...opts(), minGp: 1 });
+    rankById = new Map(R.rows.map((r) => [r.p.id, r]));
+    renderSettings();
+    if (S.tab === 'rank') renderTable();
+    if (S.tab === 'trade') renderTrade();
+    persist();
+  }
+
+  // ---------- settings ----------
+  function setSeg(id, v) { for (const b of $(id).querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === v)); }
+  function renderSettings() {
+    setSeg('#fmt', S.format); setSeg('#mode', S.mode); setSeg('#posf', S.pos); setSeg('#healthf', S.health);
+    $('#puntbox').hidden = S.format !== '9cat';
+    $('#scorebox').hidden = S.format !== 'points';
+    if (S.format !== 'points') $('#scoring').classList.remove('open');
+    $('#punt').innerHTML = F.CATS.map((c) => `<button class="chip" data-c="${c}" aria-pressed="${S.punt.includes(c)}" title="Punt ${F.CAT_LABEL[c]}">${F.CAT_LABEL[c]}</button>`).join('');
+    $('#preset').value = S.preset;
+    const sc = scoring();
+    $('#scoring').innerHTML = F.SCORE_KEYS.map((k) => `<label>${({ pts: 'Point', tpm: '3PM', fgm: 'FGM', fga: 'FGA', ftm: 'FTM', fta: 'FTA', reb: 'Rebound', ast: 'Assist', stl: 'Steal', blk: 'Block', tov: 'Turnover', dd: 'Dbl-dbl', td: 'Trpl-dbl' })[k]}<input class="inp num" data-k="${k}" type="number" step="0.1" value="${sc[k] ?? 0}"></label>`).join('');
+  }
+  $('#teams').innerHTML = [8, 10, 12, 14, 16, 18, 20].map((n) => `<option value="${n}">${n} teams</option>`).join('');
+  $('#roster').innerHTML = [10, 11, 12, 13, 14, 15, 16].map((n) => `<option value="${n}">${n} roster spots</option>`).join('');
+  $('#preset').innerHTML = `<option value="espn">ESPN scoring</option><option value="yahoo">Yahoo scoring</option><option value="custom">Custom scoring</option>`;
+  $('#teams').value = S.teams; $('#roster').value = S.roster;
+  $('#fmt').onclick = (e) => { const v = e.target.closest('button')?.dataset.v; if (v) { S.format = v; S.sort = null; recompute(); } };
+  $('#mode').onclick = (e) => { const v = e.target.closest('button')?.dataset.v; if (v) { S.mode = v; recompute(); } };
+  $('#teams').onchange = (e) => { S.teams = +e.target.value; recompute(); };
+  $('#roster').onchange = (e) => { S.roster = +e.target.value; recompute(); };
+  $('#punt').onclick = (e) => { const c = e.target.closest('button')?.dataset.c; if (!c) return; S.punt = S.punt.includes(c) ? S.punt.filter((x) => x !== c) : [...S.punt, c]; recompute(); };
+  $('#preset').onchange = (e) => { S.preset = e.target.value; if (S.preset === 'custom') $('#scoring').classList.add('open'); recompute(); };
+  $('#editscore').onclick = () => { $('#scoring').classList.toggle('open'); };
+  $('#scoring').oninput = (e) => {
+    const k = e.target.dataset.k; if (!k) return;
+    if (S.preset !== 'custom') { S.custom = { ...scoring() }; S.preset = 'custom'; $('#preset').value = 'custom'; }
+    S.custom[k] = Number(e.target.value) || 0;
+    clearTimeout(S._t); S._t = setTimeout(() => { R = F.rank(DATA.players, { ...opts(), minGp: 1 }); rankById = new Map(R.rows.map((r) => [r.p.id, r])); S.tab === 'rank' ? renderTable() : renderTrade(); persist(); }, 200);
+  };
+
+  // ---------- tabs ----------
+  document.querySelector('.tabs').onclick = (e) => {
+    const t = e.target.closest('.tab')?.dataset.tab; if (!t) return;
+    S.tab = t;
+    for (const b of document.querySelectorAll('.tab')) b.setAttribute('aria-pressed', String(b.dataset.tab === t));
+    $('#v-rank').hidden = t !== 'rank'; $('#v-trade').hidden = t !== 'trade'; $('#v-help').hidden = t !== 'help';
+    $('#settings').hidden = t === 'help';
+    if (t === 'rank') renderTable(); if (t === 'trade') renderTrade();
+  };
+
+  // ---------- small pieces ----------
+  const team = (p) => `<span class="tm" style="background:#${/^[0-9a-f]{6}$/i.test(p.color || '') ? p.color : '333a46'}">${esc(p.team)}</span>`;
+  function injPill(p) {
+    if (!p.inj) return '';
+    const s = p.inj.status || '';
+    const out = /^out|^ir|injured reserve|suspension/i.test(s);
+    const label = out ? 'OUT' : /^doubtful/i.test(s) ? 'DBT' : /^day-to-day/i.test(s) ? 'DTD' : 'Q';
+    return `<span class="ij ${out ? 'out' : 'q'}" title="${esc(s)}${p.inj.injury ? ' · ' + esc(p.inj.injury) : ''}${p.inj.returns ? ' · back ' + esc(p.inj.returns) : ''}">${label}</span>`;
+  }
+  const isHurt = (p) => p.inj && /^out|^ir|injured reserve|suspension/i.test(p.inj.status || '');
+  function heat(z, punted) {
+    if (punted || z == null) return '';
+    const a = Math.min(1, Math.abs(z) / 2.2) * 0.42;
+    return `background:${z >= 0 ? `rgba(53,208,127,${a})` : `rgba(255,107,107,${a})`}`;
+  }
+
+  // ---------- rankings table ----------
+  const COLS9 = [
+    { k: 'gp', t: 'GP', v: (r) => gpShown(r), show: (r) => gpCell(r), title: 'Games played in the stats you picked. ⚠ = small sample (under 8 games this season and little last season)' },
+    { k: 'min', t: 'MIN', v: (r) => r.g.min, f: f1 },
+    { k: 'fg', t: 'FG%', z: 'fg', v: (r) => r.z.fg, show: (r) => `${pct3(r.g.fgp)}<span class="sub">${f1(r.g.fga)}</span>` },
+    { k: 'ft', t: 'FT%', z: 'ft', v: (r) => r.z.ft, show: (r) => `${pct3(r.g.ftp)}<span class="sub">${f1(r.g.fta)}</span>` },
+    ...['tpm', 'pts', 'reb', 'ast', 'stl', 'blk', 'tov'].map((c) => ({ k: c, t: F.CAT_LABEL[c], z: c, v: (r) => r.z[c], show: (r) => f1(r.g[c]) })),
+    { k: 'usg', t: 'USG%', v: (r) => r.g.usg ?? -1, f: f1 },
+    { k: 'value', t: 'Value', v: (r) => r.value, f: f2, cls: 'val' },
+  ];
+  const COLSP = [
+    { k: 'gp', t: 'GP', v: (r) => gpShown(r), show: (r) => gpCell(r), title: 'Games played in the stats you picked. ⚠ = small sample (under 8 games this season and little last season)' },
+    { k: 'min', t: 'MIN', v: (r) => r.g.min, f: f1 },
+    { k: 'value', t: 'FPPG', v: (r) => r.fp, f: f1, cls: 'val' },
+    { k: 'ros', t: 'ROS FP', v: (r) => r.fp * rosGames(r.p), f: (v) => Math.round(v), title: 'Fantasy points we expect over the rest of the season' },
+    ...['pts', 'reb', 'ast', 'stl', 'blk', 'tpm', 'tov'].map((c) => ({ k: c, t: F.CAT_LABEL[c], v: (r) => r.g[c], f: f1 })),
+    { k: 'fgp', t: 'FG%', v: (r) => r.g.fgp ?? 0, f: pct3 },
+    { k: 'ftp', t: 'FT%', v: (r) => r.g.ftp ?? 0, f: pct3 },
+    { k: 'usg', t: 'USG%', v: (r) => r.g.usg ?? -1, f: f1 },
+    { k: 'ts', t: 'TS%', v: (r) => r.g.ts ?? 0, f: pct1 },
+  ];
+  const gpShown = (r) => (S.mode === 'proj' ? r.p.cur.gp : r.g.gp);
+  const smallSample = (p) => S.mode !== 'prev' && (p.cur.gp || 0) < 8 && (p.prev.gp || 0) < 10;
+  const gpCell = (r) => `${smallSample(r.p) ? '<span title="Small sample: treat with care" style="color:var(--warn)">⚠ </span>' : ''}${Math.round(gpShown(r))}`;
+  const rosCache = new Map();
+  function rosGames(p) { if (!rosCache.has(p.id)) rosCache.set(p.id, F.availability(p, DATA.teams[p.team]).games); return rosCache.get(p.id); }
+
+  function filtered() {
+    const q = S.q.trim().toLowerCase();
+    return R.rows.filter((r) => (!q || r.p.name.toLowerCase().includes(q) || r.p.team.toLowerCase() === q || (r.p.teamName || '').toLowerCase().includes(q))
+      && (!S.pos || (r.p.pos || '').includes(S.pos)) && (S.health !== 'healthy' || !isHurt(r.p)));
+  }
+
+  function renderTable() {
+    if (!R) return;
+    const cols = S.format === 'points' ? COLSP : COLS9;
+    let rows = filtered();
+    if (S.sort) { const c = cols.find((x) => x.k === S.sort); if (c) rows = rows.slice().sort((a, b) => S.sortDir * (c.v(a) - c.v(b))); }
+    $('#count').textContent = `${rows.length} players · ${MODE_LABEL[S.mode]} · top ${R.poolSize} are rostered in your league`;
+    const head = `<thead><tr><th class="l" data-k="">#</th><th class="l player" data-k="">Player</th>${cols.map((c) => `<th data-k="${c.k}" class="${S.sort === c.k ? 'sorted' : ''} ${c.z && S.punt.includes(c.z) ? 'punted' : ''}" ${c.title ? `title="${esc(c.title)}"` : ''}>${c.t}${S.sort === c.k ? (S.sortDir < 0 ? ' ▾' : ' ▴') : ''}</th>`).join('')}</tr></thead>`;
+    const body = rows.slice(0, S.show).map((r) => `<tr data-id="${r.p.id}"><td class="rank l">${r.rank}</td><td class="l player"><div class="pl"><b>${esc(r.p.name)}</b>${team(r.p)}<span class="pos">${esc(r.p.pos || '')}</span>${injPill(r.p)}</div></td>${cols.map((c) => {
+      const punted = c.z && S.punt.includes(c.z);
+      return `<td class="${c.cls || ''} ${punted ? 'dim' : ''}" style="${c.z ? heat(r.z[c.z], punted) : ''}" ${c.z ? `title="z-score ${sgn(r.z[c.z], 2)}"` : ''}>${c.show ? c.show(r) : c.f(c.v(r))}</td>`;
+    }).join('')}</tr>`).join('');
+    $('#table').innerHTML = head + `<tbody>${body || `<tr><td class="loading" colspan="${cols.length + 2}">No players match.</td></tr>`}</tbody>`;
+    $('#more').hidden = rows.length <= S.show;
+  }
+  $('#table').onclick = (e) => {
+    const th = e.target.closest('th');
+    if (th) { const k = th.dataset.k; if (!k) { S.sort = null; } else if (S.sort === k) S.sortDir *= -1; else { S.sort = k; S.sortDir = k === 'tov' && S.format === 'points' ? 1 : -1; } return renderTable(); }
+    const tr = e.target.closest('tr[data-id]'); if (tr) openPlayer(tr.dataset.id);
+  };
+  $('#q').oninput = (e) => { S.q = e.target.value; S.show = 150; renderTable(); };
+  $('#posf').onclick = (e) => { const b = e.target.closest('button'); if (b) { S.pos = b.dataset.v; setSeg('#posf', S.pos); renderTable(); } };
+  $('#healthf').onclick = (e) => { const b = e.target.closest('button'); if (b) { S.health = b.dataset.v; setSeg('#healthf', S.health); renderTable(); } };
+  $('#more').onclick = () => { S.show += 150; renderTable(); };
+
+  // ---------- player drawer ----------
+  function zBars(z, title) {
+    if (!z) return '';
+    return `<div class="sec"><h3>${title}</h3><div class="zbars">${F.CATS.map((c) => {
+      const v = z[c] || 0, w = Math.min(50, (Math.abs(v) / 3) * 50);
+      return `<div class="zrow ${S.punt.includes(c) && S.format === '9cat' ? 'punted' : ''}"><span class="nm">${F.CAT_LABEL[c]}</span><span class="track"><span class="fill" style="${v >= 0 ? `left:50%;width:${w}%;background:var(--up)` : `right:50%;width:${w}%;background:var(--down)`}"></span></span><span class="zv">${sgn(v, 2)}</span></div>`;
+    }).join('')}</div></div>`;
+  }
+
+  function openPlayer(id) {
+    const p = byId.get(id); if (!p) return;
+    const r = rankById.get(id);
+    const ctx = F.context(p, DATA.players, S.mode);
+    const av = F.availability(p, DATA.teams[p.team]);
+    const g = ctx.line || {};
+    const lines = [['Projected', F.line(p, 'proj')], [`This season`, F.perGame(p.cur)], ['Last 14 days', F.perGame(p.l14)], [`Last season (${DATA.prevSeason})`, F.perGame(p.prev)]].filter(([, l]) => l);
+    const mates = ctx.sameSpot.map((m) => `<li><b>${esc(m.name)}</b>: ${f1(m.mpg)} min, ${f1(m.usg)}% usage${m.inj ? ` · <span style="color:var(--warn)">${esc(m.inj)}</span>` : ''}</li>`).join('') || '<li>No one else at his position plays real minutes.</li>';
+    const out = ctx.matesOut.length ? `<p class="note"><b>Teammates out:</b> ${ctx.matesOut.map((m) => `${esc(m.name)} (${f1(m.mpg)} min, ${f1(m.usg)}% usage)`).join(', ')}. Their shots and minutes go to someone, so this player may get more for now.</p>` : '';
+    const value = S.format === 'points' ? `<div class="kpi"><div class="k">FPPG (${esc(scoring().label || 'custom')})</div><div class="v">${f1(r?.fp)}</div><div class="h">${Math.round((r?.fp || 0) * av.games)} ROS FP</div></div>` : `<div class="kpi"><div class="k">9-cat Value</div><div class="v">${f2(r?.value)}</div><div class="h">per game, ${MODE_LABEL[S.mode].toLowerCase()}</div></div>`;
+    $('#drawer').innerHTML = `
+      <div class="dhead"><div><h2>${esc(p.name)}</h2><div class="pl">${team(p)}<span class="pos">${esc(p.teamName)} · ${esc(p.pos || '')}</span>${injPill(p)}</div></div><button class="x" id="dx" aria-label="Close">×</button></div>
+      <div class="dbody">
+        ${p.inj ? `<div class="banner" style="margin:0">${esc(p.inj.status)}${p.inj.injury ? ' · ' + esc(p.inj.injury) : ''}${p.inj.returns ? ` · expected back ${esc(p.inj.returns)}` : ''}${p.inj.note ? `<br><span style="color:var(--muted)">${esc(p.inj.note)}</span>` : ''}</div>` : ''}
+        <div class="sec"><h3>Fantasy</h3><div class="kpis">
+          <div class="kpi"><div class="k">Rank</div><div class="v">${r ? '#' + r.rank : '–'}</div><div class="h">${S.format === 'points' ? 'points' : '9-cat'}${S.punt.length && S.format === '9cat' ? ', punting ' + S.punt.map((c) => F.CAT_LABEL[c]).join('/') : ''}</div></div>
+          ${value}
+          <div class="kpi"><div class="k">Games left (expected)</div><div class="v">${Math.round(av.games)}</div><div class="h">of ${av.left} · ${Math.round(av.durability * 100)}% durability</div></div>
+        </div></div>
+        ${S.format === '9cat' ? zBars(r?.z, 'Category z-scores (vs a typical rostered player)') : ''}
+        <div class="sec"><h3>Per-game stats</h3><div class="scroll"><table class="mini"><thead><tr><th></th><th>GP</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>3PM</th><th>TO</th><th>FG%</th><th>FT%</th><th>3P%</th></tr></thead><tbody>
+          ${lines.map(([n, l]) => `<tr><td>${n}</td><td>${n === 'Projected' ? '–' : Math.round(l.gp)}</td><td>${f1(l.min)}</td><td>${f1(l.pts)}</td><td>${f1(l.reb)}</td><td>${f1(l.ast)}</td><td>${f1(l.stl)}</td><td>${f1(l.blk)}</td><td>${f1(l.tpm)}</td><td>${f1(l.tov)}</td><td>${pct3(l.fgp)}</td><td>${pct3(l.ftp)}</td><td>${pct3(l.tpp)}</td></tr>`).join('')}
+        </tbody></table></div></div>
+        <div class="sec"><h3>Advanced (${MODE_LABEL[S.mode].toLowerCase()})</h3><div class="kpis">
+          <div class="kpi"><div class="k">Usage rate</div><div class="v">${f1(g.usg)}%</div><div class="h">${ctx.usgTrend != null ? sgn(ctx.usgTrend) + ' vs last season' : '20% is average'}</div></div>
+          <div class="kpi"><div class="k">True shooting</div><div class="v">${pct1(g.ts)}</div><div class="h">~58% is average</div></div>
+          <div class="kpi"><div class="k">eFG%</div><div class="v">${pct1(g.efg)}</div></div>
+          <div class="kpi"><div class="k">AST/TO</div><div class="v">${f2(g.astTo)}</div></div>
+          <div class="kpi"><div class="k">+/- per game</div><div class="v">${sgn(g.pm)}</div></div>
+          <div class="kpi"><div class="k">Double-doubles</div><div class="v">${g.dd != null ? Math.round(g.dd * 100) + '%' : '–'}</div><div class="h">of games</div></div>
+        </div></div>
+        <div class="sec"><h3>Role & team depth</h3><div class="kpis">
+          <div class="kpi"><div class="k">Role</div><div class="v" style="font-size:15px;text-transform:capitalize">${ctx.role}</div><div class="h">starts ${Math.round((g.startPct || 0) * 100)}% of games</div></div>
+          <div class="kpi"><div class="k">Team minutes rank</div><div class="v">${ctx.minRank ? '#' + ctx.minRank : '–'}</div><div class="h">of ${ctx.rotation} who've played</div></div>
+          <div class="kpi"><div class="k">Team usage rank</div><div class="v">${ctx.usgRank ? '#' + ctx.usgRank : '–'}</div><div class="h">among 12+ min players</div></div>
+          <div class="kpi"><div class="k">Minutes trend</div><div class="v" style="color:${(ctx.minTrend || 0) >= 0 ? 'var(--up)' : 'var(--down)'}">${sgn(ctx.minTrend)}</div><div class="h">${ctx.minTrendBasis}</div></div>
+        </div>
+        <p class="note" style="margin:10px 0 4px"><b>Others at his position on ${esc(p.teamName)}</b> (this season):</p><ul class="lst">${mates}</ul>${out}</div>
+        <div class="btnrow"><button class="btn" data-add="give">Add to trade: I give</button><button class="btn pri" data-add="get">Add to trade: I get</button></div>
+      </div>`;
+    $('#drawer').classList.add('open'); $('#scrim').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false');
+    $('#dx').onclick = closeDrawer;
+    for (const b of $('#drawer').querySelectorAll('[data-add]')) b.onclick = () => { addToTrade(b.dataset.add, id); closeDrawer(); switchTab('trade'); };
+  }
+  function closeDrawer() { $('#drawer').classList.remove('open'); $('#scrim').classList.remove('open'); $('#drawer').setAttribute('aria-hidden', 'true'); }
+  $('#scrim').onclick = closeDrawer;
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+  const switchTab = (t) => document.querySelector(`.tab[data-tab="${t}"]`).click();
+
+  // ---------- trade machine ----------
+  function addToTrade(side, id) {
+    const other = side === 'give' ? 'get' : 'give';
+    S[other] = S[other].filter((x) => x !== id);
+    if (!S[side].includes(id) && S[side].length < 6) S[side].push(id);
+    S.take = null; writeHash();
+  }
+  function writeHash() { history.replaceState(null, '', S.give.length || S.get.length ? `#give=${S.give.join(',')}&get=${S.get.join(',')}` : location.pathname + location.search); }
+  function readHash() {
+    const h = new URLSearchParams(location.hash.slice(1));
+    const ids = (k) => (h.get(k) || '').split(',').filter((x) => byId.has(x)).slice(0, 6);
+    S.give = ids('give'); S.get = ids('get');
+    if (S.give.length || S.get.length) setTimeout(() => switchTab('trade'));
+  }
+
+  for (const inp of document.querySelectorAll('.pick input')) {
+    const ac = inp.nextElementSibling;
+    let hits = [], hi = 0;
+    const draw = () => {
+      const q = inp.value.trim().toLowerCase();
+      if (!q) { ac.classList.remove('open'); return; }
+      const taken = new Set([...S.give, ...S.get]);
+      hits = DATA.players.filter((p) => !taken.has(p.id) && p.name.toLowerCase().includes(q)).sort((a, b) => (rankById.get(a.id)?.rank || 9999) - (rankById.get(b.id)?.rank || 9999)).slice(0, 8);
+      hi = 0;
+      ac.innerHTML = hits.length ? hits.map((p, i) => `<button data-id="${p.id}" class="${i === hi ? 'hi' : ''}"><b>${esc(p.name)}</b>${team(p)}<span class="pos">${esc(p.pos || '')}</span>${injPill(p)}<span class="r">#${rankById.get(p.id)?.rank || '–'}</span></button>`).join('') : '<div class="empty">No match</div>';
+      ac.classList.add('open');
+    };
+    const pick = (id) => { addToTrade(inp.dataset.side, id); inp.value = ''; ac.classList.remove('open'); renderTrade(); inp.focus(); };
+    inp.oninput = draw;
+    inp.onkeydown = (e) => {
+      if (!ac.classList.contains('open') || !hits.length) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); hi = (hi + (e.key === 'ArrowDown' ? 1 : hits.length - 1)) % hits.length; ac.querySelectorAll('button').forEach((b, i) => b.classList.toggle('hi', i === hi)); }
+      if (e.key === 'Enter') { e.preventDefault(); pick(hits[hi].id); }
+    };
+    ac.onmousedown = (e) => { const b = e.target.closest('button[data-id]'); if (b) { e.preventDefault(); pick(b.dataset.id); } };
+    inp.onblur = () => setTimeout(() => ac.classList.remove('open'), 120);
+  }
+
+  function sideList(ev, side) {
+    const list = ev ? ev[side] : [];
+    if (!S[side].length) return `<div class="empty">${side === 'give' ? 'Who are you sending away?' : 'Who are you getting back?'}</div>`;
+    return S[side].map((id) => {
+      const p = byId.get(id), x = list.find((y) => y.id === id), r = rankById.get(id);
+      const g = x?.ctx.line || F.line(p, S.mode) || {};
+      return `<div class="tp"><div><button class="open" data-open="${id}">${esc(p.name)}</button> ${team(p)} <span class="pos">${esc(p.pos || '')}</span> ${injPill(p)}
+        <div class="meta">#${r?.rank || '–'} · ${S.format === 'points' ? `${f1(r?.fp)} FPPG` : `${f2(r?.value)} value`} · ${f1(g.min)} min · ${f1(g.usg)}% usg · ~${Math.round(x?.games ?? 0)} games left</div></div>
+        <button class="rm" data-rm="${side}:${id}" aria-label="Remove">×</button></div>`;
+    }).join('');
+  }
+
+  function renderTrade() {
+    if (!DATA) return;
+    const ready = S.give.length && S.get.length;
+    const ev = (S.give.length || S.get.length) ? F.evaluate(DATA, { give: S.give, get: S.get }, opts()) : null;
+    $('#giveList').innerHTML = sideList(ev, 'give');
+    $('#getList').innerHTML = sideList(ev, 'get');
+    const unit = S.format === 'points' ? 'FP' : 'value';
+    $('#totGive').textContent = ev && ev.give.length ? `${Math.round(ev.restOut)} ${unit} rest of season` : '';
+    $('#totGet').textContent = ev && ev.get.length ? `${Math.round(ev.restIn)} ${unit} rest of season` : '';
+    if (!ready) { $('#result').innerHTML = `<div class="card note">Add at least one player to each side. You can also open any player in <b>Player Rankings</b> and tap "Add to trade". Your league settings above (9-cat or points, punts, scoring, league size) are used.</div>`; return; }
+    $('#result').innerHTML = resultHtml(ev);
+    $('#takebtn').onclick = () => getTake(ev);
+  }
+  $('#v-trade').addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-rm]');
+    if (rm) { const [side, id] = rm.dataset.rm.split(':'); S[side] = S[side].filter((x) => x !== id); S.take = null; writeHash(); return renderTrade(); }
+    const op = e.target.closest('[data-open]'); if (op) openPlayer(op.dataset.open);
+  });
+
+  function resultHtml(ev) {
+    const word = { win: 'You win this trade', 'slight win': 'Slight win for you', fair: 'Pretty fair trade', 'slight loss': 'Slight loss for you', loss: 'You lose this trade' }[ev.verdict];
+    const cls = /win/.test(ev.verdict) ? 'win' : /loss/.test(ev.verdict) ? 'loss' : 'fair';
+    const max = Math.max(Math.abs(ev.restIn), Math.abs(ev.restOut), 1);
+    const unit = S.format === 'points' ? 'fantasy points' : '9-cat value';
+    const bar = (label, v, color) => `<div class="vsrow"><span>${label}</span><span class="b" style="width:${Math.max(2, (Math.max(0, v) / max) * 100)}%;background:${color}"></span><span class="n">${Math.round(v)}</span></div>`;
+    const verdict = `<div class="card verdict"><div><div class="big ${cls}">${word}</div><div class="note">Rest-of-season ${unit} above a waiver-level player, in your ${ev.teams}-team league${ev.punt.length ? `, punting ${ev.punt.map((c) => F.CAT_LABEL[c]).join('/')}` : ''}. Stats: ${MODE_LABEL[ev.mode]}.</div></div>
+      <div class="vs">${bar('You get', ev.restIn, 'var(--up)')}${bar('You give', ev.restOut, 'var(--down)')}</div></div>`;
+
+    let middle;
+    if (ev.cats) {
+      const rows = F.CATS.map((c) => {
+        const v = ev.cats[c], w = Math.min(50, (Math.abs(v) / 4) * 50);
+        return `<div class="zrow ${ev.punt.includes(c) ? 'punted' : ''}"><span class="nm">${F.CAT_LABEL[c]}</span><span class="track"><span class="fill" style="${v >= 0 ? `left:50%;width:${w}%;background:var(--up)` : `right:50%;width:${w}%;background:var(--down)`}"></span></span><span class="zv" style="color:${v >= 0 ? 'var(--up)' : 'var(--down)'}">${sgn(v, 2)}</span></div>`;
+      }).join('');
+      const gains = F.CATS.filter((c) => !ev.punt.includes(c) && ev.cats[c] >= 0.5).map((c) => F.CAT_LABEL[c]);
+      const losses = F.CATS.filter((c) => !ev.punt.includes(c) && ev.cats[c] <= -0.5).map((c) => F.CAT_LABEL[c]);
+      middle = `<div class="card"><div class="sec"><h3>Category change per game (z-score, your team)</h3><div class="zbars">${rows}</div>
+        <p class="note" style="margin:10px 0 0">${gains.length ? `You gain in <b>${gains.join(', ')}</b>. ` : ''}${losses.length ? `You lose in <b>${losses.join(', ')}</b>. ` : ''}${!gains.length && !losses.length ? 'No big category swings. ' : ''}Includes the waiver player you add or cut to balance roster spots. Crossed-out categories are punted.</p></div></div>`;
+    } else {
+      middle = `<div class="card"><div class="sec"><h3>Fantasy points</h3><div class="kpis">
+        <div class="kpi"><div class="k">Per game (above waiver)</div><div class="v" style="color:${ev.fpChange.perGame >= 0 ? 'var(--up)' : 'var(--down)'}">${sgn(ev.fpChange.perGame)}</div><div class="h">if everyone plays</div></div>
+        <div class="kpi"><div class="k">Rest of season</div><div class="v" style="color:${ev.fpChange.rest >= 0 ? 'var(--up)' : 'var(--down)'}">${sgn(ev.fpChange.rest, 0)}</div><div class="h">after injuries & durability</div></div>
+        <div class="kpi"><div class="k">Waiver-level FPPG</div><div class="v">${f1(ev.replPer)}</div><div class="h">player #${ev.teams * ev.roster + 1}–${ev.teams * ev.roster + 10}</div></div>
+      </div></div></div>`;
+    }
+    const why = `<div class="card"><div class="sec"><h3>Edge's take</h3><div class="take" id="take">${S.take && S.takeKey === takeKey() ? esc(S.take) : '<span class="note">Get a plain-English breakdown of this trade from our AI. It uses only the numbers on this page.</span>'}</div>
+      <div class="btnrow" style="margin-top:10px"><button class="btn pri" id="takebtn">${S.take && S.takeKey === takeKey() ? 'Ask again' : '✨ Get Edge\'s take'}</button></div></div></div>`;
+
+    const all = [...ev.get.map((x) => ({ ...x, side: 'get' })), ...ev.give.map((x) => ({ ...x, side: 'give' }))];
+    const table = `<div class="card"><div class="sec"><h3>Player breakdown</h3><div class="scroll"><table class="mini"><thead><tr><th>Player</th><th>Rank</th><th>${S.format === 'points' ? 'FPPG' : 'Value/G'}</th><th>vs waiver</th><th>Games left</th><th>ROS</th><th>MIN</th><th>USG%</th><th>TS%</th><th>Role</th><th>Min trend</th></tr></thead><tbody>
+      ${all.map((x) => `<tr><td><span style="color:${x.side === 'get' ? 'var(--up)' : 'var(--down)'};font-weight:700">${x.side === 'get' ? '+' : '−'}</span> <button class="open" data-open="${x.id}" style="border:0;background:none;padding:0;font-weight:700">${esc(x.name)}</button> ${injPill(byId.get(x.id))}</td><td>${x.rank ? '#' + x.rank : '–'}</td><td>${S.format === 'points' ? f1(x.per) : f2(x.per)}</td><td>${sgn(x.perOverRepl, S.format === 'points' ? 1 : 2)}</td><td title="${x.avail.why ? esc(x.avail.why) + ' · ' : ''}${Math.round(x.avail.durability * 100)}% durability">${Math.round(x.games)}/${x.avail.left}</td><td>${Math.round(x.rest)}</td><td>${f1(x.ctx.line?.min)}</td><td>${f1(x.ctx.line?.usg)}</td><td>${pct1(x.ctx.line?.ts)}</td><td style="text-transform:capitalize">${x.ctx.role}</td><td style="color:${(x.ctx.minTrend || 0) >= 0 ? 'var(--up)' : 'var(--down)'}">${sgn(x.ctx.minTrend)}</td></tr>`).join('')}
+      </tbody></table></div></div></div>`;
+    const depth = `<div class="card"><div class="sec"><h3>Team context</h3>${all.map((x) => `<p class="note" style="margin:0 0 8px"><b>${esc(x.name)}</b> (${esc(x.team)}): #${x.ctx.minRank || '–'} in team minutes, #${x.ctx.usgRank || '–'} in usage. ${x.ctx.sameSpot.length ? `Same position: ${x.ctx.sameSpot.slice(0, 3).map((m) => `${esc(m.name)} ${f1(m.mpg)} min`).join(', ')}.` : ''}${x.ctx.matesOut.length ? ` <span style="color:var(--warn)">Teammates out: ${x.ctx.matesOut.map((m) => esc(m.name)).join(', ')}.</span>` : ''}</p>`).join('')}</div></div>`;
+    const flags = ev.flags.length ? `<div class="card"><div class="sec"><h3>Things to know</h3><ul class="lst">${ev.flags.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></div></div>` : '';
+    return verdict + `<div class="grid2">${middle}${why}</div>` + table + `<div class="grid2">${depth}${flags || '<div></div>'}</div>`;
+  }
+
+  const takeKey = () => JSON.stringify([S.give, S.get, opts()]);
+  async function getTake() {
+    const el = $('#take'), btn = $('#takebtn');
+    btn.disabled = true; el.innerHTML = '<span class="note">Thinking it over…</span>';
+    try {
+      const r = await fetch('/api/fantasy/take', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ give: S.give, get: S.get, opts: opts() }) });
+      const b = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(b.error === 'daily_limit' ? 'You\'ve hit today\'s limit for AI answers. Try again tomorrow.' : b.error === 'slow_down' ? 'Too many questions at once. Wait a few seconds and try again.' : b.error === 'ai_off' ? 'Edge\'s take isn\'t switched on for this site yet.' : 'Couldn\'t get a take right now. Try again in a minute.');
+      S.take = b.text; S.takeKey = takeKey();
+      el.textContent = b.text; btn.textContent = 'Ask again';
+    } catch (e) {
+      el.innerHTML = `<span class="note">${esc(e.message === 'Failed to fetch' ? 'Edge\'s take needs the live site (it isn\'t available in this preview).' : e.message)}</span>`;
+    } finally { btn.disabled = false; }
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>
