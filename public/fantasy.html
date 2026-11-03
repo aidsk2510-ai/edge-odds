@@ -231,7 +231,7 @@
       <h3>Where the numbers come from</h3>
       Every NBA box score this season and last season (from the free sportsdataverse data set, which copies ESPN box scores). Injuries come from ESPN's injury report. It all updates every few hours, and none of it uses odds credits.
       <h3>The four stat views</h3>
-      <b>This season</b> and <b>Last 14 days</b> are exactly what happened. <b>Last season</b> is last year's per-game numbers. <b>Projected</b> is the one we recommend: this season's numbers, with 12 games of last season mixed in. Early in the year that keeps a hot or cold week from fooling you; by midseason it's almost all this year. Rookies use only this season.
+      <b>This season</b> and <b>Last 14 days</b> are exactly what happened. <b>Last season</b> is last year's per-game numbers. <b>Projected</b> is the one we recommend: this season's numbers, with 20 games of last season mixed in. Early in the year that keeps a hot or cold week from fooling you; by midseason it's almost all this year. Rookies use only this season.
       <h3>9-Cat rankings</h3>
       For each category (FG%, FT%, 3PM, PTS, REB, AST, STL, BLK, TO), we compare a player to the average of the top players who'd be rostered in your league (teams × roster spots). The difference is shown as a <b>z-score</b>: <code>+1.0</code> means one "step" better than a typical rostered player, <code>-1.0</code> one step worse. Turnovers are flipped, so fewer is better. FG% and FT% count by <b>impact</b>: a 60% shooter on 15 shots a game helps your team's FG% far more than a 60% shooter on 3 shots. A player's <b>Value</b> is his z-scores added up. If you <b>punt</b> a category, it's left out of Value.
       <h3>Points rankings</h3>
@@ -240,7 +240,7 @@
       <b>USG%</b> (usage rate): the share of his team's plays he finishes with a shot, free throws or a turnover while he's on the floor; 20% is average, 30%+ is a team's go-to scorer. <b>TS%</b> (true shooting): scoring efficiency, counting 3s and free throws; around 58% is average. <b>eFG%</b>: field goal % with 3s worth 1.5 makes. <b>Role</b>: starter, key bench (22+ minutes), rotation (14+) or fringe. <b>Team minutes rank</b> shows where he sits in his team's rotation.
       <h3>How the Trade Machine decides</h3>
       1. Each player's value per game (9-cat Value or FPPG) is compared to a <b>waiver-level</b> player: the average player just outside the rostered pool, the one you could pick up for free.<br>
-      2. That's multiplied by the <b>games he's expected to play</b> the rest of the season: his team's games left, minus games he'll miss if he's injured (from his return date), times how often he's played this season and last (durability).<br>
+      2. That's multiplied by his <b>games left</b>: the games left on his team's schedule, minus games he'll miss if he's injured right now (from his return date; Out with no date counts as about 8 games).<br>
       3. Add up each side. More players doesn't automatically win: if you get 2 players for 1, you have to cut someone (a waiver-level player), and if you get 1 for 2 you get a free spot to fill from waivers. Comparing to waiver level handles both.<br>
       4. For 9-cat we also show how each category changes per game, so you can tell if a trade fits your punt build.<br>
       5. We flag the things numbers can miss: small samples, minutes or usage going up or down, injured teammates opening up shots, and players listed behind him at his position.<br>
@@ -380,7 +380,7 @@
     { k: 'gp', t: 'GP', v: (r) => gpShown(r), show: (r) => gpCell(r), title: 'Games played in the stats you picked. ⚠ = small sample (under 8 games this season and little last season)' },
     { k: 'min', t: 'MIN', v: (r) => r.g.min, f: f1 },
     { k: 'value', t: 'FPPG', v: (r) => r.fp, f: f1, cls: 'val' },
-    { k: 'ros', t: 'ROS FP', v: (r) => r.fp * rosGames(r.p), f: (v) => Math.round(v), title: 'Fantasy points we expect over the rest of the season' },
+    { k: 'ros', t: 'ROS FP', v: (r) => r.fp * rosGames(r.p), f: (v) => Math.round(v), title: 'FPPG × games left (minus current injuries)' },
     ...['pts', 'reb', 'ast', 'stl', 'blk', 'tpm', 'tov'].map((c) => ({ k: c, t: F.CAT_LABEL[c], v: (r) => r.g[c], f: f1 })),
     { k: 'fgp', t: 'FG%', v: (r) => r.g.fgp ?? 0, f: pct3 },
     { k: 'ftp', t: 'FT%', v: (r) => r.g.ftp ?? 0, f: pct3 },
@@ -449,7 +449,7 @@
         <div class="sec"><h3>Fantasy</h3><div class="kpis">
           <div class="kpi"><div class="k">Rank</div><div class="v">${r ? '#' + r.rank : '–'}</div><div class="h">${S.format === 'points' ? 'points' : '9-cat'}${S.punt.length && S.format === '9cat' ? ', punting ' + S.punt.map((c) => F.CAT_LABEL[c]).join('/') : ''}</div></div>
           ${value}
-          <div class="kpi"><div class="k">Games left (expected)</div><div class="v">${Math.round(av.games)}</div><div class="h">of ${av.left} · ${Math.round(av.durability * 100)}% durability</div></div>
+          <div class="kpi"><div class="k">Games left</div><div class="v">${av.left}</div><div class="h">on ${esc(p.team)}'s schedule${av.missed ? ` · ~${Math.round(av.missed)} likely missed to injury` : ''}</div></div>
         </div></div>
         ${S.format === '9cat' ? zBars(r?.z, 'Category z-scores (vs a typical rostered player)') : ''}
         <div class="sec"><h3>Per-game stats</h3><div class="scroll"><table class="mini"><thead><tr><th></th><th>GP</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>3PM</th><th>TO</th><th>FG%</th><th>FT%</th><th>3P%</th></tr></thead><tbody>
@@ -526,7 +526,7 @@
       const p = byId.get(id), x = list.find((y) => y.id === id), r = rankById.get(id);
       const g = x?.ctx.line || F.line(p, S.mode) || {};
       return `<div class="tp"><div><button class="open" data-open="${id}">${esc(p.name)}</button> ${team(p)} <span class="pos">${esc(p.pos || '')}</span> ${injPill(p)}
-        <div class="meta">#${r?.rank || '–'} · ${S.format === 'points' ? `${f1(r?.fp)} FPPG` : `${f2(r?.value)} value`} · ${f1(g.min)} min · ${f1(g.usg)}% usg · ~${Math.round(x?.games ?? 0)} games left</div></div>
+        <div class="meta">#${r?.rank || '–'} · ${S.format === 'points' ? `${f1(r?.fp)} FPPG` : `${f2(r?.value)} value`} · ${f1(g.min)} min · ${f1(g.usg)}% usg · ${x?.avail.left ?? '–'} games left</div></div>
         <button class="rm" data-rm="${side}:${id}" aria-label="Remove">×</button></div>`;
     }).join('');
   }
@@ -572,7 +572,7 @@
     } else {
       middle = `<div class="card"><div class="sec"><h3>Fantasy points</h3><div class="kpis">
         <div class="kpi"><div class="k">Per game (above waiver)</div><div class="v" style="color:${ev.fpChange.perGame >= 0 ? 'var(--up)' : 'var(--down)'}">${sgn(ev.fpChange.perGame)}</div><div class="h">if everyone plays</div></div>
-        <div class="kpi"><div class="k">Rest of season</div><div class="v" style="color:${ev.fpChange.rest >= 0 ? 'var(--up)' : 'var(--down)'}">${sgn(ev.fpChange.rest, 0)}</div><div class="h">after injuries & durability</div></div>
+        <div class="kpi"><div class="k">Rest of season</div><div class="v" style="color:${ev.fpChange.rest >= 0 ? 'var(--up)' : 'var(--down)'}">${sgn(ev.fpChange.rest, 0)}</div><div class="h">games left, minus current injuries</div></div>
         <div class="kpi"><div class="k">Waiver-level FPPG</div><div class="v">${f1(ev.replPer)}</div><div class="h">player #${ev.teams * ev.roster + 1}–${ev.teams * ev.roster + 10}</div></div>
       </div></div></div>`;
     }
@@ -580,8 +580,8 @@
       <div class="btnrow" style="margin-top:10px"><button class="btn pri" id="takebtn">${S.take && S.takeKey === takeKey() ? 'Ask again' : '✨ Get Edge\'s take'}</button></div></div></div>`;
 
     const all = [...ev.get.map((x) => ({ ...x, side: 'get' })), ...ev.give.map((x) => ({ ...x, side: 'give' }))];
-    const table = `<div class="card"><div class="sec"><h3>Player breakdown</h3><div class="scroll"><table class="mini"><thead><tr><th>Player</th><th>Rank</th><th>${S.format === 'points' ? 'FPPG' : 'Value/G'}</th><th>vs waiver</th><th>Games left</th><th>ROS</th><th>MIN</th><th>USG%</th><th>TS%</th><th>Role</th><th>Min trend</th></tr></thead><tbody>
-      ${all.map((x) => `<tr><td><span style="color:${x.side === 'get' ? 'var(--up)' : 'var(--down)'};font-weight:700">${x.side === 'get' ? '+' : '−'}</span> <button class="open" data-open="${x.id}" style="border:0;background:none;padding:0;font-weight:700">${esc(x.name)}</button> ${injPill(byId.get(x.id))}</td><td>${x.rank ? '#' + x.rank : '–'}</td><td>${S.format === 'points' ? f1(x.per) : f2(x.per)}</td><td>${sgn(x.perOverRepl, S.format === 'points' ? 1 : 2)}</td><td title="${x.avail.why ? esc(x.avail.why) + ' · ' : ''}${Math.round(x.avail.durability * 100)}% durability">${Math.round(x.games)}/${x.avail.left}</td><td>${Math.round(x.rest)}</td><td>${f1(x.ctx.line?.min)}</td><td>${f1(x.ctx.line?.usg)}</td><td>${pct1(x.ctx.line?.ts)}</td><td style="text-transform:capitalize">${x.ctx.role}</td><td style="color:${(x.ctx.minTrend || 0) >= 0 ? 'var(--up)' : 'var(--down)'}">${sgn(x.ctx.minTrend)}</td></tr>`).join('')}
+    const table = `<div class="card"><div class="sec"><h3>Player breakdown</h3><div class="scroll"><table class="mini"><thead><tr><th>Player</th><th>Rank</th><th>${S.format === 'points' ? 'FPPG' : 'Value/G'}</th><th>vs waiver</th><th title="Games left on his team's schedule">Games left</th><th>ROS</th><th>MIN</th><th>USG%</th><th>TS%</th><th>Role</th><th>Min trend</th></tr></thead><tbody>
+      ${all.map((x) => `<tr><td><span style="color:${x.side === 'get' ? 'var(--up)' : 'var(--down)'};font-weight:700">${x.side === 'get' ? '+' : '−'}</span> <button class="open" data-open="${x.id}" style="border:0;background:none;padding:0;font-weight:700">${esc(x.name)}</button> ${injPill(byId.get(x.id))}</td><td>${x.rank ? '#' + x.rank : '–'}</td><td>${S.format === 'points' ? f1(x.per) : f2(x.per)}</td><td>${sgn(x.perOverRepl, S.format === 'points' ? 1 : 2)}</td><td title="${x.avail.why ? esc(x.avail.why) : 'Healthy'}${x.avail.history ? ' · ' + esc(x.avail.history) : ''}">${x.avail.left}</td><td>${Math.round(x.rest)}</td><td>${f1(x.ctx.line?.min)}</td><td>${f1(x.ctx.line?.usg)}</td><td>${pct1(x.ctx.line?.ts)}</td><td style="text-transform:capitalize">${x.ctx.role}</td><td style="color:${(x.ctx.minTrend || 0) >= 0 ? 'var(--up)' : 'var(--down)'}">${sgn(x.ctx.minTrend)}</td></tr>`).join('')}
       </tbody></table></div></div></div>`;
     const depth = `<div class="card"><div class="sec"><h3>Team context</h3>${all.map((x) => `<p class="note" style="margin:0 0 8px"><b>${esc(x.name)}</b> (${esc(x.team)}): #${x.ctx.minRank || '–'} in team minutes, #${x.ctx.usgRank || '–'} in usage. ${x.ctx.sameSpot.length ? `Same position: ${x.ctx.sameSpot.slice(0, 3).map((m) => `${esc(m.name)} ${f1(m.mpg)} min`).join(', ')}.` : ''}${x.ctx.matesOut.length ? ` <span style="color:var(--warn)">Teammates out: ${x.ctx.matesOut.map((m) => esc(m.name)).join(', ')}.</span>` : ''}</p>`).join('')}</div></div>`;
     const flags = ev.flags.length ? `<div class="card"><div class="sec"><h3>Things to know</h3><ul class="lst">${ev.flags.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></div></div>` : '';

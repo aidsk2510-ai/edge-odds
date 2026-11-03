@@ -10,7 +10,7 @@
   };
   const SCORE_KEYS = ['pts', 'tpm', 'fgm', 'fga', 'ftm', 'fta', 'reb', 'ast', 'stl', 'blk', 'tov', 'dd', 'td'];
   const SEASON_GAMES = 82;
-  const PRIOR_GAMES = 12; // how many games of last season to blend into "Projected"
+  const PRIOR_GAMES = 20; // how many games of last season to blend into "Projected"
 
   // ---------- per-game lines ----------
   function perGame(t) {
@@ -119,11 +119,15 @@
   function availability(p, team, now = Date.now()) {
     const teamGp = team?.gp || 0;
     const left = Math.max(0, SEASON_GAMES - teamGp);
-    // Durability: share of team games he played (this season + last season).
-    const played = (p.cur?.gp || 0) + (p.prev?.gp || 0);
-    const possible = teamGp + (p.prev?.gp ? SEASON_GAMES : 0);
-    let durability = possible >= 10 ? Math.min(1, played / possible) : 0.9;
-    durability = Math.max(0.55, durability);
+    // Durability: a typical player misses ~8% of games. Nudge that by his own history (this season counts fully,
+    // last season half), but heavily shrunk toward 8% so one injury-hit season doesn't sink him. Capped at 3%-25%.
+    const curGp = p.cur?.gp || 0, prevGp = p.prev?.gp || 0;
+    const possible = teamGp + (prevGp ? SEASON_GAMES / 2 : 0);
+    const played = Math.min(curGp, teamGp || curGp) + prevGp / 2;
+    const BASE = 0.08, K = SEASON_GAMES;
+    const missRate = Math.max(0.03, Math.min(0.25, (Math.max(0, possible - played) + BASE * K) / (possible + K)));
+    const durability = 1 - missRate;
+    const history = prevGp ? `played ${prevGp} of 82 last season${teamGp ? ` and ${Math.min(curGp, teamGp)} of ${teamGp} this season` : ''}` : teamGp ? `played ${Math.min(curGp, teamGp)} of ${teamGp} this season` : null;
     let missed = 0, why = null;
     const inj = p.inj;
     if (inj) {
@@ -136,8 +140,10 @@
       else if (/^questionable|^day-to-day/i.test(s)) { missed = 0.5; why = 'day-to-day'; }
     }
     missed = Math.min(left, missed);
-    const games = Math.max(0, (left - missed) * durability);
-    return { left, missed, durability, games, why };
+    // Value uses his team's real games left, minus games he's expected to miss from a current injury.
+    // (durability/history are shown as context only.)
+    const games = Math.max(0, left - missed);
+    return { left, missed, durability, games, why, history };
   }
 
   // ---------- context: role, usage, depth ----------
