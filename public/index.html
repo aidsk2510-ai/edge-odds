@@ -196,6 +196,37 @@
     .cside .bet { grid-column: 1 / -1; text-align: left; display: flex; gap: 8px; align-items: baseline; }
   }
 
+  /* Best Props */
+  .bpintro { font-size: 12.5px; color: var(--muted); line-height: 1.55; margin-bottom: 12px; }
+  .bpbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .bplist { display: grid; gap: 10px; }
+  .bp { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--panel); display: grid; gap: 9px; }
+  .bphead { display: flex; align-items: flex-start; gap: 10px; }
+  .bphead b { font-size: 15px; }
+  .bphead .sub { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .conf { margin-left: auto; font-size: 10.5px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 7px; border-radius: 5px; white-space: nowrap; }
+  .conf.strong { background: var(--accent); color: var(--accent-ink); }
+  .conf.lean { border: 1px solid var(--line); color: var(--muted); }
+  .bpbet { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .bpbet .what { font-size: 16px; font-weight: 700; }
+  .bpbet .px { min-width: 64px; }
+  .bpbet small { color: var(--muted); font-size: 12px; }
+  .bpbet .add { margin-left: auto; font-size: 11.5px; color: var(--faint); }
+  .bpnums { display: flex; gap: 6px; flex-wrap: wrap; }
+  .spark { position: relative; display: flex; align-items: flex-end; gap: 3px; height: 58px; padding-top: 12px; padding-right: 44px; }
+  .spark i { flex: 1; border-radius: 3px 3px 0 0; background: var(--line); min-height: 2px; position: relative; }
+  .spark i.hit { background: rgba(53, 208, 127, 0.75); }
+  .spark i span { position: absolute; bottom: 100%; left: 0; right: 0; text-align: center; font: 600 9.5px var(--mono); color: var(--faint); }
+  .spark .ln { position: absolute; left: 0; right: 0; border-top: 1.5px dashed var(--accent); pointer-events: none; }
+  .spark .lnl { position: absolute; right: 0; transform: translateY(-50%); font: 700 9.5px var(--mono); color: var(--accent); background: var(--panel); padding: 0 3px; }
+  .sparkcap { font-size: 11px; color: var(--faint); margin-top: -4px; }
+  ul.why { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; font-size: 12.5px; }
+  ul.why li { color: var(--muted); padding-left: 18px; position: relative; line-height: 1.45; }
+  ul.why li::before { content: '✓'; position: absolute; left: 0; color: var(--up); font-weight: 800; }
+  ul.why li.no::before { content: '✗'; color: var(--down); }
+  ul.why li.warn { color: var(--text); }
+  ul.why li.warn::before { content: '!'; color: #ffb547; }
+
   /* Edge Picks */
   .picksbtn { border: 1px solid rgba(198, 244, 50, 0.45); background: rgba(198, 244, 50, 0.08); color: var(--accent); border-radius: 8px; padding: 7px 12px; font-weight: 700; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
   .picksbtn:hover { background: rgba(198, 244, 50, 0.16); }
@@ -413,6 +444,7 @@
   </div>
   <input class="search" id="search" type="search" placeholder="Search teams…" autocomplete="off">
   <button class="picksbtn" id="picksBtn"><span>✨</span> Edge Picks</button>
+  <button class="picksbtn" id="propsBtn"><span>🎯</span> Best Props</button>
   <div class="spacer"></div>
   <div class="status" id="status"><span class="dot"></span><span id="statusText">Loading…</span></div>
   <button class="iconbtn" id="refresh" title="Refresh now"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg><span id="countdown">30s</span></button>
@@ -441,16 +473,17 @@
 <div class="scrim calc" id="cScrim"></div>
 <aside class="drawer picks" id="picksDrawer" aria-hidden="true" aria-label="Edge Picks">
   <div class="dhead"><div class="dtitle"><h2 id="pkTitle">✨ Edge Picks</h2><button class="x" id="pkClose" aria-label="Close">×</button></div>
-    <div class="ptabs" id="pkTabs" role="tablist"><button data-t="picks" aria-selected="true" role="tab">Picks</button><button data-t="ask" aria-selected="false" role="tab">💬 Ask Edge</button></div>
+    <div class="ptabs" id="pkTabs" role="tablist"><button data-t="picks" aria-selected="true" role="tab">Picks</button><button data-t="props" aria-selected="false" role="tab">🎯 Best Props</button><button data-t="ask" aria-selected="false" role="tab">💬 Ask Edge</button></div>
     <div class="status" id="pkStatus" style="font-size:12px"></div></div>
   <div class="dbody" id="pkBody"></div>
+  <div class="dbody" id="bpBody" hidden></div>
   <div class="askpane" id="askPane" hidden>
     <div class="askmsgs" id="askMsgs" aria-live="polite"></div>
     <form class="askbox" id="askForm" autocomplete="off">
       <textarea id="askInput" rows="1" maxlength="600" placeholder="Ask about any sport, bet or parlay…"></textarea>
       <button type="submit" id="askSend" aria-label="Send">↑</button>
     </form>
-    <div class="askfine">Answers use this site’s odds, weather, EPA and props, not injuries or news. Not financial advice. 21+.</div>
+    <div class="askfine">Answers use this site’s odds, weather, team stats, injury reports, player game logs and props, not breaking news. Not financial advice. 21+.</div>
   </div>
 </aside>
 <div class="modal" id="calc" role="dialog" aria-modal="true" aria-labelledby="cTitle" aria-hidden="true">
@@ -1387,14 +1420,16 @@
   // ---------- Ask Edge (chat) ----------
   const A = { pane: document.getElementById('askPane'), msgs: document.getElementById('askMsgs'), form: document.getElementById('askForm'), input: document.getElementById('askInput'), send: document.getElementById('askSend'), tabs: document.getElementById('pkTabs') };
   const ask = { tab: 'picks', busy: false, msgs: [] }; // one conversation across every sport
-  const SUGGEST = ['Best bets across all sports today', 'Build a 3-leg parlay from different sports', 'Any football games with bad weather?', 'Which NFL teams have the best EPA this week?', 'Show me NBA player points props tonight', 'Who is injured in tonight\u2019s NBA games?', 'How do you pick bets?'];
+  const SUGGEST = ['Best bets across all sports today', 'Build a 3-leg parlay from different sports', 'Any football games with bad weather?', 'Which NFL teams have the best EPA this week?', 'Best NBA player props tonight', 'Best NFL props this week', 'Who is injured in tonight\u2019s NBA games?', 'How do you pick bets?'];
   const thread = () => ask.msgs;
 
   function setTab(t) {
     ask.tab = t;
     A.tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.t === t)));
     PK.body.hidden = t !== 'picks';
+    BP.body.hidden = t !== 'props';
     A.pane.hidden = t !== 'ask';
+    if (t === 'props') loadBestProps();
     if (t === 'ask') { renderThread(); setTimeout(() => A.input.focus(), 50); }
   }
   function renderThread(pending) {
@@ -1445,6 +1480,66 @@
   A.input.addEventListener('input', autosize);
   A.msgs.addEventListener('click', (e) => { const b = e.target.closest('button[data-q]'); if (b) sendQuestion(b.dataset.q); });
 
+  // ---------- Best Props ----------
+  const BP = { body: document.getElementById('bpBody') };
+  const bp = { sport: null, token: 0, data: {} };
+  const BP_SPORTS = [['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL']];
+  async function loadBestProps(force) {
+    if (!bp.sport) bp.sport = state.sport === 'americanfootball_nfl' ? 'americanfootball_nfl' : 'basketball_nba';
+    const token = ++bp.token;
+    const bar = `<div class="bpbar"><div class="seg" id="bpSport">${BP_SPORTS.map(([k, l]) => `<button data-v="${k}" aria-pressed="${bp.sport === k}">${l}</button>`).join('')}</div><span class="status" style="font-size:12px" id="bpStatus"></span></div>`;
+    if (state.demo) { BP.body.innerHTML = bar + '<div class="empty"><b>Best Props needs live odds</b>It works on your live site once the odds key is set.</div>'; return; }
+    const cachedData = bp.data[bp.sport];
+    if (cachedData && !force && Date.now() - cachedData._at < 120e3) return renderBestProps(cachedData, bar);
+    BP.body.innerHTML = bar + `<div class="note loading"><div class="who">Best Props</div><p>Checking every player's recent games, matchups and injuries against every sportsbook's line… (first load can take up to 20 seconds)</p></div>`;
+    try {
+      const r = await fetch(`/api/props/best?sport=${bp.sport}`, { cache: 'no-store' });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || r.status);
+      d._at = Date.now(); bp.data[bp.sport] = d;
+      if (token === bp.token) renderBestProps(d, bar);
+    } catch (e) {
+      if (token === bp.token) BP.body.innerHTML = bar + `<div class="empty"><b>Couldn’t load props</b>${e.message === 'off' ? 'Best Props isn’t switched on for this site yet.' : 'Try again in a minute.'}</div>`;
+    }
+  }
+  function bpEvent(x) { // enough of an event for the parlay slip to price this prop at every book
+    return { id: x.eventId, home_team: x.home, away_team: x.away, commence_time: x.start,
+      bookmakers: Object.entries(x.prices || {}).map(([k, v]) => ({ key: k, title: k, markets: [{ key: x.market, outcomes: [{ name: 'Over', description: x.oddsName, point: x.line, price: v.Over }, { name: 'Under', description: x.oddsName, point: x.line, price: v.Under }] }] })) };
+  }
+  function spark(x) {
+    const vals = x.last10.slice().reverse();
+    if (!vals.length) return '';
+    const top = Math.max(x.line * 1.6, ...vals, 1);
+    const hit = (v) => (x.side === 'Over' ? v > x.line : v < x.line);
+    return `<div class="spark">${vals.map((v) => `<i class="${hit(v) ? 'hit' : ''}" style="height:${Math.max(3, (v / top) * 100)}%"><span>${v}</span></i>`).join('')}<div class="ln" style="bottom:${(x.line / top) * 100}%"><span class="lnl">${x.line}</span></div></div><div class="sparkcap">His last ${vals.length} games, oldest → newest. Green = would have won this bet.</div>`;
+  }
+  function renderBestProps(d, bar) {
+    const sportLabel = bp.sport === 'basketball_nba' ? 'NBA' : 'NFL';
+    const intro = `<div class="bpintro">For each player we project his number for this game from <b>his game logs</b> (season, last ${bp.sport === 'basketball_nba' ? 5 : 4} games, last season), <b>how this defense does against his position</b>, <b>injured teammates</b>${bp.sport === 'basketball_nba' ? ', <b>back-to-backs</b>' : ', <b>wind and rain</b>'} and <b>his own injury status</b>. Then we blend that with the sportsbooks' own chance (they're sharp, so ours only counts 35%). Picks show where the two agree there's value. Stats through ${esc(d.through || '—')}.</div>`;
+    let list;
+    if (!d.picks.length) list = `<div class="empty"><b>${d.games ? 'Nothing stands out right now' : 'No props posted yet'}</b>${d.games ? 'Our projections and the sportsbook lines mostly agree. Check back closer to game time.' : `Sportsbooks usually post ${sportLabel} props the day before (NFL: midweek).`}</div>`;
+    else list = `<div class="bplist">${d.picks.map((x) => {
+      const leg = { k: 'p', sport: bp.sport, ev: x.eventId, m: x.market, n: x.side, d: x.oddsName, p: x.line };
+      return `<div class="bp">
+        <div class="bphead"><div><b>${esc(x.player)}</b><span class="sub">${esc(x.team)} vs ${esc(x.opp)} · ${esc(shortTime(x.start))}${x.status ? ` · <span style="color:#ffb547">${esc(x.status)}</span>` : ''}</span></div><span class="conf ${x.confidence}">${x.confidence === 'strong' ? 'Strong lean' : 'Lean'}</span></div>
+        <div class="bpbet"><span class="what">${esc(x.side)} ${x.line} ${esc(x.stat)}</span><span class="px best ${slipHas(leg) ? 'picked' : ''}" ${legAttr(leg)} data-bp="${esc(x.eventId)}">${fmtPrice(x.best.price)}</span><small>${esc(BOOKS[x.best.book]?.[0] || x.best.title)}</small><span class="add">tap price to add to parlay</span></div>
+        <div class="bpnums"><span class="tag">projection ${x.projection}</span><span class="tag good" title="Our projection blended with the sportsbooks' chance">our chance ${pct0(x.chance)}</span><span class="tag" title="All sportsbooks' prices with their cut removed">books ${pct0(x.marketChance)}</span>${edgeTag(x.edge)}</div>
+        ${spark(x)}
+        <ul class="why">${x.why.map((w) => `<li class="${w.warn ? 'warn' : w.good ? '' : 'no'}">${esc(w.t)}</li>`).join('')}</ul>
+      </div>`;
+    }).join('')}</div>`;
+    BP.body.innerHTML = bar + intro + list + `<p class="howcaveat" style="margin-top:14px">Projections are estimates, not guarantees. Lines move: check the price at the sportsbook, and confirm any Questionable player is active. Prices as of ${d.asOf ? esc(shortTime(d.asOf)) : '—'}.</p>`;
+    const st = document.getElementById('bpStatus'); if (st) st.textContent = `${d.picks.length} picks · ${d.modeled} lines checked across ${d.games} game${d.games === 1 ? '' : 's'}`;
+  }
+  BP.body.addEventListener('click', (e) => {
+    const sb = e.target.closest('#bpSport button');
+    if (sb) { bp.sport = sb.dataset.v; return loadBestProps(); }
+    const el = e.target.closest('.px[data-leg]'); if (!el) return;
+    const l = JSON.parse(el.dataset.leg);
+    const x = (bp.data[bp.sport]?.picks || []).find((y) => y.eventId === l.ev && y.market === l.m && y.oddsName === l.d && y.side === l.n);
+    if (x) { toggleLeg(l, bpEvent(x)); el.classList.toggle('picked', slipHas(l)); }
+  });
+  document.getElementById('propsBtn').addEventListener('click', () => { ask.tab = 'props'; openPicks(); });
   document.getElementById('picksBtn').addEventListener('click', openPicks);
   document.getElementById('askFab').addEventListener('click', () => { ask.tab = 'ask'; openPicks(); });
   document.getElementById('pkClose').addEventListener('click', closePicks);
