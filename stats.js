@@ -239,7 +239,17 @@ export function indexTeams(stats) {
 const BOX_KEYS = ['min', 'fgm', 'fga', 'tpm', 'tpa', 'ftm', 'fta', 'oreb', 'reb', 'ast', 'stl', 'blk', 'tov', 'pts', 'pf', 'pm', 'gs', 'dd', 'td', 'useP', 'useT'];
 const emptyLine = () => Object.fromEntries([['gp', 0], ...BOX_KEYS.map((k) => [k, 0])]);
 
-async function readPlayerBox(season) {
+// Box score files are big, so keep them in memory: last season never changes; this season refreshes every 30 min.
+const boxMemo = new Map();
+function readPlayerBox(season) {
+  const live = season >= nbaSeason();
+  const hit = boxMemo.get(season);
+  if (hit && (!live || Date.now() - hit.at < 30 * 60e3)) return hit.p;
+  const p = readPlayerBoxRaw(season).catch((e) => { boxMemo.delete(season); throw e; });
+  boxMemo.set(season, { at: Date.now(), p });
+  return p;
+}
+async function readPlayerBoxRaw(season) {
   const res = await fetch(`${SDV}/espn_nba_player_boxscores/player_box_${season}.csv`);
   if (res.status === 404) return null; // season file not published yet
   if (!res.ok) throw new Error(`sportsdataverse players ${res.status}`);
@@ -254,6 +264,7 @@ async function readPlayerBox(season) {
     rows.push({
       game: r[cols.game_id], date: r[cols.game_date], id: r[cols.athlete_id], name: r[cols.athlete_display_name],
       team: r[cols.team_abbreviation], teamName: r[cols.team_display_name], color: r[cols.team_color], pos: r[cols.athlete_position_abbreviation],
+      opp: r[cols.opponent_team_abbreviation], oppName: r[cols.opponent_team_display_name], home: r[cols.home_away] === 'home',
       starter: r[cols.starter] === 'true',
       min, fgm: n('field_goals_made'), fga: n('field_goals_attempted'), tpm: n('three_point_field_goals_made'), tpa: n('three_point_field_goals_attempted'),
       ftm: n('free_throws_made'), fta: n('free_throws_attempted'), oreb: n('offensive_rebounds'), reb: n('rebounds'), ast: n('assists'),
@@ -315,4 +326,148 @@ export async function loadNbaPlayers(season = nbaSeason()) {
     through: cur?.last ? fmt(cur.last) : null, l14From: cutoff ? fmt(cutoff) : null,
     hasCurrent: Boolean(cur?.rows.length), teams, players: out,
   };
+}
+
+// ---------- Prop model inputs ----------
+export const nameKey = (n) => String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '').replace(/[^a-z]/g, '');
+export const posGroupNba = (pos) => (/C/.test(pos || '') ? 'big' : /F/.test(pos || '') ? 'wing' : 'guard');
+const NBA_STATS = ['pts', 'reb', 'ast', 'tpm'];
+
+// Builds a lookup of how many points/rebounds/assists/threes each defense allows to guards, wings and bigs.
+function defenseTable(games, groupOf, stats, K) {
+  // games: Map oppTeam -> Map gameKey -> {group -> {stat -> total}}
+  const per = {}, league = {};
+  for (const [opp, byGame] of games) {
+    per[opp] = {};
+    for (const g of byGame.values()) for (const [grp, t] of Object.entries(g)) {
+      const a = (per[opp][grp] ||= { n: 0 }); a.n++;
+      for (const k of stats) a[k] = (a[k] || 0) + (t[k] || 0);
+    }
+  }
+  for (const opp in per) for (const grp in per[opp]) {
+    const a = per[opp][grp], L = (league[grp] ||= { n: 0 });
+    L.n += a.n; for (const k of stats) L[k] = (L[k] || 0) + a[k];
+  }
+  const out = {};
+  for (const opp in per) {
+    out[opp] = {};
+    for (const grp in per[opp]) {
+      const a = per[opp][grp], L = league[grp];
+      out[opp][grp] = { games: a.n };
+      for (const k of stats) {
+        const avg = L[k] / L.n, mine = a[k] / a.n;
+        const raw = avg > 0 ? mine / avg : 1;
+        out[opp][grp][k] = { perGame: mine, leagueAvg: avg, factor: (a.n * raw + K) / (a.n + K) }; // shrink toward average until there are enough games
+      }
+    }
+  }
+  // Rank 1 = allows the most.
+  for (const grp of Object.keys(league)) for (const k of stats) {
+    const list = Object.keys(out).filter((t) => out[t][grp]).sort((a, b) => out[b][grp][k].perGame - out[a][grp][k].perGame);
+    list.forEach((t, i) => { out[t][grp][k].rank = i + 1; out[t][grp][k].of = list.length; });
+  }
+  return out;
+}
+
+export async function loadNbaPropData(season = nbaSeason()) {
+  const [cur, prev] = await Promise.all([readPlayerBox(season), readPlayerBox(season - 1).catch(() => null)]);
+  if (!cur?.rows.length) throw new Error('no box scores for this NBA season yet');
+  const players = {}, teamDates = {}, teamGameIds = {}, teamTotals = {}, defGames = new Map();
+  const logOf = (x) => ({ date: x.date, opp: x.opp, home: x.home, min: x.min, pts: x.pts, reb: x.reb, ast: x.ast, tpm: x.tpm, starter: x.starter });
+  for (const x of cur.rows) {
+    const k = nameKey(x.name);
+    const p = (players[k] ||= { name: x.name, team: x.team, teamName: x.teamName, pos: x.pos, logs: [], prev: [], _d: '' });
+    if (x.date >= p._d) Object.assign(p, { _d: x.date, team: x.team, teamName: x.teamName, pos: x.pos || p.pos });
+    p.logs.push(logOf(x));
+    (teamDates[x.team] ||= new Set()).add(x.date);
+    (teamGameIds[x.team] ||= new Map()).set(x.game, x.date);
+    const tt = (teamTotals[x.team] ||= { games: new Set(), pts: 0, reb: 0, ast: 0, tpm: 0 });
+    tt.games.add(x.game); for (const s of NBA_STATS) tt[s] += x[s];
+    const byGame = defGames.get(x.opp) || new Map(); defGames.set(x.opp, byGame);
+    const g = byGame.get(x.game) || {}; byGame.set(x.game, g);
+    const t = (g[posGroupNba(x.pos)] ||= {}); for (const s of NBA_STATS) t[s] = (t[s] || 0) + x[s];
+  }
+  if (prev) for (const x of prev.rows) { const p = players[nameKey(x.name)]; if (p) p.prev.push(logOf(x)); }
+  // Who played in each team's most recent games (to tell a new absence from an old one).
+  const recent = {};
+  for (const [team, m] of Object.entries(teamGameIds)) {
+    const last3 = [...m.entries()].sort((a, b) => (a[1] < b[1] ? 1 : -1)).slice(0, 3).map(([id]) => id);
+    recent[team] = { games: last3, played: {} };
+  }
+  for (const x of cur.rows) { const r = recent[x.team]; if (r?.games.includes(x.game)) r.played[nameKey(x.name)] = (r.played[nameKey(x.name)] || 0) + 1; }
+  for (const p of Object.values(players)) {
+    p.logs.sort((a, b) => (a.date < b.date ? 1 : -1)); p.prev.sort((a, b) => (a.date < b.date ? 1 : -1)); p.prev = p.prev.slice(0, 25); delete p._d;
+  }
+  const teams = {};
+  for (const [t, tt] of Object.entries(teamTotals)) {
+    const n = tt.games.size;
+    teams[t] = { games: n, perGame: Object.fromEntries(NBA_STATS.map((s) => [s, tt[s] / n])), dates: [...teamDates[t]].sort(), recent: recent[t] };
+  }
+  const names = {};
+  for (const x of cur.rows) { names[x.teamName] = x.team; names[x.oppName] = x.opp; }
+  return { sport: 'basketball_nba', through: cur.last, players, teams, names, defense: defenseTable(defGames, posGroupNba, NBA_STATS, 8) };
+}
+
+// ---------- NFL weekly player stats (nflverse) ----------
+const NFL_STATS = ['pass_yds', 'pass_att', 'rush_yds', 'carries', 'rec', 'tgt', 'rec_yds'];
+export const posGroupNfl = (pos) => (pos === 'QB' ? 'QB' : pos === 'RB' || pos === 'FB' ? 'RB' : pos === 'TE' ? 'TE' : 'WR');
+async function readNflWeekly(season) {
+  const res = await fetch(`${NFLVERSE}/stats_player/stats_player_week_${season}.csv`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`nflverse stats_player ${res.status}`);
+  const rows = []; let cols = null;
+  await streamCsv(Readable.fromWeb(res.body), (r) => {
+    if (!cols) { cols = Object.fromEntries(r.map((name, i) => [name, i])); return; }
+    if (r[cols.season_type] !== 'REG') return;
+    const n = (k) => Number(r[cols[k]]) || 0;
+    rows.push({
+      id: r[cols.player_id], name: r[cols.player_display_name], pos: r[cols.position], team: r[cols.team], opp: r[cols.opponent_team], week: n('week'), game: r[cols.game_id],
+      pass_yds: n('passing_yards'), pass_att: n('attempts'), rush_yds: n('rushing_yards'), carries: n('carries'), rec: n('receptions'), tgt: n('targets'), rec_yds: n('receiving_yards'),
+    });
+  });
+  return rows;
+}
+const nflMemo = new Map();
+function nflWeekly(season, live) {
+  const hit = nflMemo.get(season);
+  if (hit && (!live || Date.now() - hit.at < 2 * 3600e3)) return hit.p;
+  const p = readNflWeekly(season).catch((e) => { nflMemo.delete(season); throw e; });
+  nflMemo.set(season, { at: Date.now(), p });
+  return p;
+}
+
+export async function loadNflPropData(season = footballSeason()) {
+  const [cur, prev] = await Promise.all([nflWeekly(season, true), nflWeekly(season - 1, false).catch(() => null)]);
+  if (!cur?.length) throw new Error('no NFL weekly stats for this season yet');
+  const players = {}, teamTot = {}, defGames = new Map(), teamWeeks = {};
+  const logOf = (x) => Object.fromEntries([['week', x.week], ['opp', x.opp], ...NFL_STATS.map((k) => [k, x[k]])]);
+  let lastWeek = 0;
+  for (const x of cur) {
+    lastWeek = Math.max(lastWeek, x.week);
+    const k = nameKey(x.name);
+    const p = (players[k] ||= { name: x.name, pos: x.pos, team: x.team, logs: [], prev: [], _w: 0 });
+    if (x.week >= p._w) Object.assign(p, { _w: x.week, team: x.team, pos: x.pos });
+    p.logs.push(logOf(x));
+    (teamWeeks[x.team] ||= new Set()).add(x.week);
+    const tt = (teamTot[x.team] ||= { tgt: 0, carries: 0, weeks: new Set() }); tt.tgt += x.tgt; tt.carries += x.carries; tt.weeks.add(x.week);
+    const byGame = defGames.get(x.opp) || new Map(); defGames.set(x.opp, byGame);
+    const g = byGame.get(x.game) || {}; byGame.set(x.game, g);
+    const t = (g[posGroupNfl(x.pos)] ||= {}); for (const s of NFL_STATS) t[s] = (t[s] || 0) + x[s];
+  }
+  if (prev) for (const x of prev) { const p = players[nameKey(x.name)]; if (p) p.prev.push(logOf(x)); }
+  for (const p of Object.values(players)) {
+    p.logs.sort((a, b) => b.week - a.week); p.prev.sort((a, b) => b.week - a.week); p.prev = p.prev.slice(0, 10);
+    // Share of team targets and carries this season, and whether he played the team's latest game.
+    const tt = teamTot[p.team]; const mine = p.logs.filter((l) => true);
+    p.tgtShare = tt?.tgt ? mine.reduce((s, l) => s + l.tgt, 0) / tt.tgt : 0;
+    p.carryShare = tt?.carries ? mine.reduce((s, l) => s + l.carries, 0) / tt.carries : 0;
+    const lastTeamWeek = Math.max(...(teamWeeks[p.team] || [0]));
+    p.playedLast = p.logs[0]?.week === lastTeamWeek;
+    delete p._w;
+  }
+  const teams = {};
+  for (const [t, tt] of Object.entries(teamTot)) teams[t] = { games: tt.weeks.size };
+  const names = {};
+  for (const [abbr, full] of Object.entries(NFL_TEAMS)) names[full] = abbr;
+  return { sport: 'americanfootball_nfl', through: `Week ${lastWeek}`, players, teams, names, defense: defenseTable(defGames, posGroupNfl, NFL_STATS, 6) };
 }

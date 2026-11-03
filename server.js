@@ -16,6 +16,9 @@ try { ({ loadNflEpa, loadCfbEpa, loadNbaRatings, indexTeams, loadNflInjuries, lo
 catch (e) { console.error(`[startup] Team EPA is off: couldn't load stats.js (${e.message}). Upload stats.js to the main folder.`); }
 try { await import('./public/picks-engine.js'); } // defines globalThis.EdgePicks (also used by the page)
 catch (e) { console.error(`[startup] Edge Picks is off: couldn't load public/picks-engine.js (${e.message}). Upload it into the public folder.`); }
+let findPropPicks = null, PROP_SPECS = null, loadNbaPropData = null, loadNflPropData = null;
+try { ({ findPropPicks, PROP_SPECS } = await import('./props-model.js')); ({ loadNbaPropData, loadNflPropData } = await import('./stats.js')); }
+catch (e) { console.error(`[startup] Best Props is off: couldn't load props-model.js (${e.message}). Upload props-model.js and stats.js to the main folder.`); }
 try { await import('./public/fantasy-engine.js'); } // defines globalThis.EdgeFantasy (also used by fantasy.html)
 catch (e) { console.error(`[startup] Fantasy trade takes are off: couldn't load public/fantasy-engine.js (${e.message}). Upload it into the public folder.`); }
 
@@ -659,6 +662,74 @@ function toolPriceBet(reg, input) {
   };
 }
 
+// ---------- Best Props: projections vs sportsbook lines ----------
+// Credits: each scan of one game costs one credit per prop market (NBA 5, NFL 4). Scans are cached, and only run
+// when someone opens Best Props or asks Edge for props.
+const PROP_SCAN = {
+  basketball_nba: { hours: Number(process.env.PROPS_SCAN_HOURS_NBA) || 30, ttl: (Number(process.env.PROPS_SCAN_MINUTES_NBA) || 180) * 60e3, load: () => loadNbaPropData() },
+  americanfootball_nfl: { hours: Number(process.env.PROPS_SCAN_HOURS_NFL) || 96, ttl: (Number(process.env.PROPS_SCAN_MINUTES_NFL) || 360) * 60e3, load: () => loadNflPropData() },
+};
+function propEvents(sport) { // free endpoint: no credits
+  return cached(`events:${sport}`, 30 * 60e3, async () => (await upstream(`/v4/sports/${sport}/events`, { dateFormat: 'iso' })).data);
+}
+function propScan(sport, ev) {
+  return cached(`propscan:${ev.id}`, PROP_SCAN[sport].ttl, async () => {
+    try {
+      const { data } = await upstream(`/v4/sports/${sport}/events/${ev.id}/odds`, { regions: REGIONS, markets: Object.keys(PROP_SPECS[sport]).join(','), oddsFormat: 'decimal', dateFormat: 'iso' });
+      return { fetchedAt: new Date().toISOString(), event: data };
+    } catch (e) {
+      if (e.status === 404 || e.status === 422) return { fetchedAt: new Date().toISOString(), event: null };
+      throw e;
+    }
+  });
+}
+function propData(sport) {
+  return cached(`propdata:${sport}`, (b) => (b ? 60 * 60e3 : 5 * 60e3), () => PROP_SCAN[sport].load().catch((e) => { console.warn(`[props] ${sport} stats: ${e.message}`); return null; }));
+}
+async function bestProps(sport) {
+  if (!findPropPicks || !PROP_SCAN[sport]) throw Object.assign(new Error('off'), { status: 503 });
+  if (!API_KEY) throw Object.assign(new Error('no key'), { status: 503 });
+  return cached(`bestprops:${sport}`, 5 * 60e3, async () => {
+    const now = Date.now(), until = now + PROP_SCAN[sport].hours * 3600e3;
+    const [data, list, inj] = await Promise.all([propData(sport), propEvents(sport), soon(injuryFinder(sport), 4000)]);
+    if (!data) return { sport, picks: [], error: 'stats_unavailable' };
+    const upcoming = list.filter((e) => { const t = Date.parse(e.commence_time); return t > now + 5 * 60e3 && t < until; }).slice(0, 16);
+    const events = [];
+    let asOf = null;
+    for (let i = 0; i < upcoming.length; i += 4) { // a few at a time, to be gentle on the API
+      const batch = await Promise.all(upcoming.slice(i, i + 4).map(async (e) => {
+        const [scan, weather] = await Promise.all([propScan(sport, e).catch((err) => { console.warn(`[props] scan ${e.id}: ${err.message}`); return null; }), sport === 'americanfootball_nfl' ? soon(weatherFor(sport, e), 2500).catch(() => null) : null]);
+        if (!scan?.event?.bookmakers?.length) return null;
+        if (!asOf || scan.fetchedAt < asOf) asOf = scan.fetchedAt;
+        const i2 = inj ? inj(e) : null;
+        return { id: e.id, start: e.commence_time, homeName: e.home_team, awayName: e.away_team, bookmakers: scan.event.bookmakers, injuries: i2 ? { home: i2.home, away: i2.away } : null, weather };
+      }));
+      events.push(...batch.filter(Boolean));
+    }
+    const out = findPropPicks({ sport, data, events, licensed: new Set(globalThis.EdgePicks?.LICENSED || []) });
+    return { sport, through: data.through, asOf, games: events.length, gamesInWindow: upcoming.length, windowHours: PROP_SCAN[sport].hours, ...out, picks: out.picks.slice(0, 30) };
+  });
+}
+
+async function toolBestProps(reg, input) {
+  const want = String(input.sport || '').toUpperCase().includes('NFL') ? 'americanfootball_nfl' : 'basketball_nba';
+  const d = await bestProps(want);
+  if (!d.picks.length) return { sport: SPORT_NAMES[want], picks: [], note: d.games ? 'No props stand out right now: our projections and the sportsbook prices mostly agree.' : 'No props are posted for upcoming games yet.' };
+  const pct = (x) => `${Math.round(x * 100)}%`;
+  return {
+    sport: SPORT_NAMES[want], stats_through: d.through, prices_as_of: d.asOf ? `${etTime(d.asOf)} ET` : null,
+    method: 'Projection from recent and season game logs, opponent defense vs his position, injured teammates, rest (NBA back-to-backs) and wind (NFL), blended 65/35 with the sportsbooks\' de-vigged chance.',
+    picks: d.picks.slice(0, Math.min(15, Number(input.limit) || 10)).map((x) => {
+      const bet = { eventId: x.eventId, market: x.market, pick: x.pick, game: x.game, start: x.start, fair: x.chance, offers: x.offers, best: x.best };
+      return {
+        id: reg.bet(bet, 'P'), bet: x.pick, game: x.game, starts: `${etTime(x.start)} ET`, best_price: globalThis.EdgePicks.fmtAmerican(x.best.price), sportsbook: x.best.title,
+        our_projection: x.projection, our_chance: pct(x.chance), books_chance: pct(x.marketChance), model_only_chance: pct(x.modelChance), edge: `${(x.edge * 100).toFixed(1)}%`, confidence: x.confidence,
+        last_10_games: x.last10.join(', '), reasons: x.why.map((w) => w.t), injury_status: x.status,
+      };
+    }),
+  };
+}
+
 const ASK_TOOLS = [
   { name: 'find_best_bets', description: 'Scan one, several, or all sports for the best-priced bets (biggest edge) and the best parlays (one leg per game, all at one sportsbook). Results include weather, team stats (football EPA, NBA ratings) and injury reports for each game. Use this for "best bets", "what should I bet", "build me a parlay" across sports.',
     input_schema: { type: 'object', properties: {
@@ -675,6 +746,8 @@ const ASK_TOOLS = [
     input_schema: { type: 'object', properties: {
       game_id: { type: 'string', description: 'e.g. "G3"' },
       stat: { type: 'string', description: 'Stat key or name, e.g. "player_points" or "points", "passing yards", "anytime TD".' } }, required: ['game_id', 'stat'] } },
+  { name: 'find_best_props', description: 'Best NBA or NFL player props right now. Each pick has our projection (from his recent and season game logs, the opponent defense against his position, injured teammates, back-to-backs, NFL wind), our chance vs the sportsbooks\' chance, the best price, his last 10 games and plain-English reasons. Use for "best props", "player bets", "who should I bet on", or a player prop parlay. Returned ids work in price_bet.',
+    input_schema: { type: 'object', properties: { sport: { type: 'string', enum: ['NBA', 'NFL'] }, limit: { type: 'number', description: 'How many picks (default 10, max 15).' } }, required: ['sport'] } },
   { name: 'price_bet', description: 'Price one bet or a parlay from bet ids returned by the other tools (B… for game bets, P… for player props), across any sports. Returns the licensed sportsbook that pays most for ALL legs together, the odds, what the stake returns, the chance all legs win and the edge. Always use this for payout or parlay math.',
     input_schema: { type: 'object', properties: {
       legs: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 10, description: 'Bet ids, e.g. ["B2","B7","P4"]' },
@@ -686,6 +759,7 @@ async function runTool(reg, name, input) {
     if (name === 'find_best_bets') return await toolFindBestBets(reg, input);
     if (name === 'list_games') return await toolListGames(reg, input);
     if (name === 'get_player_props') return await toolPlayerProps(reg, input);
+    if (name === 'find_best_props') return await toolBestProps(reg, input);
     if (name === 'price_bet') return toolPriceBet(reg, input);
     return { error: 'Unknown tool' };
   } catch (e) {
@@ -710,8 +784,9 @@ How to answer:
 - Be short and plain, so a 5th grader could follow: usually 2 to 6 sentences or a short dash list. Plain text, no markdown headers, tables or bold. Never show internal ids (like B3, G2, P5).
 - Copy prices, lines and sportsbook names exactly from tool results. Give the chance of winning when you recommend something.
 - "Best bet" means best price compared with the fair chance, not a sure winner. Never promise a win or call anything a lock or guaranteed.
-- Injuries: use the injury reports in tool results and name the source (and NFL report week). They can lag late news, so for game-time decisions suggest checking right before the game. College football, college basketball, soccer and UFC have no injury data here. Beyond what the tools return, you do not know lineups, news, player stats, records or trends.
+- Injuries: use the injury reports in tool results and name the source (and NFL report week). They can lag late news, so for game-time decisions suggest checking right before the game. College football, college basketball, soccer and UFC have no injury data here. Beyond what the tools return, you do not know lineups, news, records or trends. For NBA and NFL props, find_best_props gives recent game logs, matchups and projections: use it and quote its reasons.
 - When a key player is Out or Doubtful, mention it next to that pick. The odds usually already reflect known injuries, so do not treat an injury as a reason the price is wrong.
+- Props: "our chance" blends our projection with the sportsbooks' chance; say it's a lean, not a sure thing. If a player is Questionable, say to confirm he's playing.
 - Live games are not included. Games far ahead may not have prices yet.
 - If someone mentions chasing losses, betting money they need, or feeling out of control, be kind, suggest a break, and share the 1-800-GAMBLER helpline.
 - Stay on sports betting and this site. Politely decline unrelated requests.`;
@@ -849,6 +924,12 @@ async function handleApi(req, res, url) {
     return sendJSON(res, 200, { ...pub, events, refreshing }); // no browser caching: the server cache handles load
   }
 
+  if (url.pathname === '/api/props/best') {
+    const sport = url.searchParams.get('sport');
+    if (!PROP_SCAN[sport]) return sendJSON(res, 400, { error: 'nba_or_nfl_only' });
+    try { return sendJSON(res, 200, await bestProps(sport)); }
+    catch (e) { if (e.status === 503) return sendJSON(res, 503, { error: 'off' }); console.warn(`[props] best ${sport}: ${e.message}`); return sendJSON(res, 502, { error: 'failed' }); }
+  }
   if (url.pathname === '/api/fantasy/nba') {
     try { return sendJSON(res, 200, await fantasyNba()); }
     catch (e) { console.warn(`[fantasy] NBA load failed: ${e.message}`); return sendJSON(res, 502, { error: 'stats_unavailable' }); }
